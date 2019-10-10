@@ -118,7 +118,7 @@ static int mtx1_wdt_open(struct inode *inode, struct file *file)
 {
 	if (test_and_set_bit(0, &mtx1_wdt_device.inuse))
 		return -EBUSY;
-	return stream_open(inode, file);
+	return nonseekable_open(inode, file);
 }
 
 

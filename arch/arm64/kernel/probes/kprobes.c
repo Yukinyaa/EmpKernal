@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * arch/arm64/kernel/probes/kprobes.c
  *
@@ -6,6 +5,16 @@
  *
  * Copyright (C) 2013 Linaro Limited.
  * Author: Sandeepa Prabhu <sandeepa.prabhu@linaro.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
  */
 #include <linux/kasan.h>
 #include <linux/kernel.h>
@@ -21,7 +30,6 @@
 #include <asm/ptrace.h>
 #include <asm/cacheflush.h>
 #include <asm/debug-monitors.h>
-#include <asm/daifflags.h>
 #include <asm/system_misc.h>
 #include <asm/insn.h>
 #include <linux/uaccess.h>
@@ -123,10 +131,8 @@ void *alloc_insn_page(void)
 	void *page;
 
 	page = vmalloc_exec(PAGE_SIZE);
-	if (page) {
+	if (page)
 		set_memory_ro((unsigned long)page, 1);
-		set_vm_flush_reset_perms(page);
-	}
 
 	return page;
 }
@@ -169,6 +175,33 @@ static void __kprobes set_current_kprobe(struct kprobe *p)
 }
 
 /*
+ * When PSTATE.D is set (masked), then software step exceptions can not be
+ * generated.
+ * SPSR's D bit shows the value of PSTATE.D immediately before the
+ * exception was taken. PSTATE.D is set while entering into any exception
+ * mode, however software clears it for any normal (none-debug-exception)
+ * mode in the exception entry. Therefore, when we are entering into kprobe
+ * breakpoint handler from any normal mode then SPSR.D bit is already
+ * cleared, however it is set when we are entering from any debug exception
+ * mode.
+ * Since we always need to generate single step exception after a kprobe
+ * breakpoint exception therefore we need to clear it unconditionally, when
+ * we become sure that the current breakpoint exception is for kprobe.
+ */
+static void __kprobes
+spsr_set_debug_flag(struct pt_regs *regs, int mask)
+{
+	unsigned long spsr = regs->pstate;
+
+	if (mask)
+		spsr |= PSR_D_BIT;
+	else
+		spsr &= ~PSR_D_BIT;
+
+	regs->pstate = spsr;
+}
+
+/*
  * Interrupts need to be disabled before single-step mode is set, and not
  * reenabled until after single-step mode ends.
  * Without disabling interrupt on local CPU, there is a chance of
@@ -179,17 +212,17 @@ static void __kprobes set_current_kprobe(struct kprobe *p)
 static void __kprobes kprobes_save_local_irqflag(struct kprobe_ctlblk *kcb,
 						struct pt_regs *regs)
 {
-	kcb->saved_irqflag = regs->pstate & DAIF_MASK;
+	kcb->saved_irqflag = regs->pstate;
 	regs->pstate |= PSR_I_BIT;
-	/* Unmask PSTATE.D for enabling software step exceptions. */
-	regs->pstate &= ~PSR_D_BIT;
 }
 
 static void __kprobes kprobes_restore_local_irqflag(struct kprobe_ctlblk *kcb,
 						struct pt_regs *regs)
 {
-	regs->pstate &= ~DAIF_MASK;
-	regs->pstate |= kcb->saved_irqflag;
+	if (kcb->saved_irqflag & PSR_I_BIT)
+		regs->pstate |= PSR_I_BIT;
+	else
+		regs->pstate &= ~PSR_I_BIT;
 }
 
 static void __kprobes
@@ -225,6 +258,8 @@ static void __kprobes setup_singlestep(struct kprobe *p,
 		slot = (unsigned long)p->ainsn.api.insn;
 
 		set_ss_context(kcb, slot);	/* mark pending ss */
+
+		spsr_set_debug_flag(regs, 0);
 
 		/* IRQs and single stepping do not mix well. */
 		kprobes_save_local_irqflag(kcb, regs);
@@ -404,11 +439,14 @@ kprobe_ss_hit(struct kprobe_ctlblk *kcb, unsigned long addr)
 	return DBG_HOOK_ERROR;
 }
 
-static int __kprobes
+int __kprobes
 kprobe_single_step_handler(struct pt_regs *regs, unsigned int esr)
 {
 	struct kprobe_ctlblk *kcb = get_kprobe_ctlblk();
 	int retval;
+
+	if (user_mode(regs))
+		return DBG_HOOK_ERROR;
 
 	/* return error if this is not our step */
 	retval = kprobe_ss_hit(kcb, instruction_pointer(regs));
@@ -423,21 +461,15 @@ kprobe_single_step_handler(struct pt_regs *regs, unsigned int esr)
 	return retval;
 }
 
-static struct step_hook kprobes_step_hook = {
-	.fn = kprobe_single_step_handler,
-};
-
-static int __kprobes
+int __kprobes
 kprobe_breakpoint_handler(struct pt_regs *regs, unsigned int esr)
 {
+	if (user_mode(regs))
+		return DBG_HOOK_ERROR;
+
 	kprobe_handler(regs);
 	return DBG_HOOK_HANDLED;
 }
-
-static struct break_hook kprobes_break_hook = {
-	.imm = KPROBES_BRK_IMM,
-	.fn = kprobe_breakpoint_handler,
-};
 
 /*
  * Provide a blacklist of symbols identifying ranges which cannot be kprobed.
@@ -567,8 +599,5 @@ int __kprobes arch_trampoline_kprobe(struct kprobe *p)
 
 int __init arch_init_kprobes(void)
 {
-	register_kernel_break_hook(&kprobes_break_hook);
-	register_kernel_step_hook(&kprobes_step_hook);
-
 	return 0;
 }

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * lec.c: Lan Emulation driver
  *
@@ -727,7 +726,9 @@ static int lecd_attach(struct atm_vcc *vcc, int arg)
 	struct lec_priv *priv;
 
 	if (arg < 0)
-		arg = 0;
+		i = 0;
+	else
+		i = arg;
 	if (arg >= MAX_LEC_ITF)
 		return -EINVAL;
 	i = array_index_nospec(arg, MAX_LEC_ITF);

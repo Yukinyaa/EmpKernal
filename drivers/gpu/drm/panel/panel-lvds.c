@@ -16,12 +16,13 @@
 #include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 
+#include <drm/drmP.h>
+#include <drm/drm_crtc.h>
+#include <drm/drm_panel.h>
+
 #include <video/display_timing.h>
 #include <video/of_display_timing.h>
 #include <video/videomode.h>
-
-#include <drm/drm_crtc.h>
-#include <drm/drm_panel.h>
 
 struct panel_lvds {
 	struct drm_panel panel;

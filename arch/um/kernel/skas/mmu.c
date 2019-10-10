@@ -119,7 +119,7 @@ void uml_setup_stubs(struct mm_struct *mm)
 	return;
 
 out:
-	force_sigsegv(SIGSEGV);
+	force_sigsegv(SIGSEGV, current);
 }
 
 void arch_exit_mmap(struct mm_struct *mm)

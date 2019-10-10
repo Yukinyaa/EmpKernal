@@ -137,8 +137,6 @@ COND_SYSCALL(capset);
 /* kernel/exit.c */
 
 /* kernel/fork.c */
-/* __ARCH_WANT_SYS_CLONE3 */
-COND_SYSCALL(clone3);
 
 /* kernel/futex.c */
 COND_SYSCALL(futex);
@@ -168,6 +166,9 @@ COND_SYSCALL(syslog);
 /* kernel/ptrace.c */
 
 /* kernel/sched/core.c */
+
+/* kernel/signal.c */
+COND_SYSCALL(pidfd_send_signal);
 
 /* kernel/sys.c */
 COND_SYSCALL(setregid);

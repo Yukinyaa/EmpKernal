@@ -1,16 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * CTF writing support via babeltrace.
  *
  * Copyright (C) 2014, Jiri Olsa <jolsa@redhat.com>
  * Copyright (C) 2014, Sebastian Andrzej Siewior <bigeasy@linutronix.de>
+ *
+ * Released under the GPL v2. (and only v2, not any later version)
  */
 
 #include <errno.h>
 #include <inttypes.h>
 #include <linux/compiler.h>
 #include <linux/kernel.h>
-#include <linux/zalloc.h>
 #include <babeltrace/ctf-writer/writer.h>
 #include <babeltrace/ctf-writer/clock.h>
 #include <babeltrace/ctf-writer/stream.h>
@@ -23,13 +23,14 @@
 #include "asm/bug.h"
 #include "data-convert-bt.h"
 #include "session.h"
+#include "util.h"
 #include "debug.h"
 #include "tool.h"
 #include "evlist.h"
 #include "evsel.h"
 #include "machine.h"
 #include "config.h"
-#include <linux/ctype.h>
+#include "sane_ctype.h"
 
 #define pr_N(n, fmt, ...) \
 	eprintf(n, debug_data_convert, fmt, ##__VA_ARGS__)
@@ -270,7 +271,7 @@ static int string_set_value(struct bt_ctf_field *field, const char *string)
 				if (i > 0)
 					strncpy(buffer, string, i);
 			}
-			memcpy(buffer + p, numstr, 4);
+			strncat(buffer + p, numstr, 4);
 			p += 3;
 		}
 	}
@@ -309,7 +310,7 @@ static int add_tracepoint_field_value(struct ctf_writer *cw,
 	if (flags & TEP_FIELD_IS_DYNAMIC) {
 		unsigned long long tmp_val;
 
-		tmp_val = tep_read_number(fmtf->event->tep,
+		tmp_val = tep_read_number(fmtf->event->pevent,
 					  data + offset, len);
 		offset = tmp_val;
 		len = offset >> 16;
@@ -353,7 +354,7 @@ static int add_tracepoint_field_value(struct ctf_writer *cw,
 			unsigned long long value_int;
 
 			value_int = tep_read_number(
-					fmtf->event->tep,
+					fmtf->event->pevent,
 					data + offset + i * len, len);
 
 			if (!(flags & TEP_FIELD_IS_SIGNED))
@@ -1353,7 +1354,7 @@ static void free_streams(struct ctf_writer *cw)
 	for (cpu = 0; cpu < cw->stream_cnt; cpu++)
 		ctf_stream__delete(cw->stream[cpu]);
 
-	zfree(&cw->stream);
+	free(cw->stream);
 }
 
 static int ctf_writer__setup_env(struct ctf_writer *cw,

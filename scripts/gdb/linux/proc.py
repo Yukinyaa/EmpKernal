@@ -29,7 +29,6 @@ class LxCmdLine(gdb.Command):
     def invoke(self, arg, from_tty):
         gdb.write(gdb.parse_and_eval("saved_command_line").string() + "\n")
 
-
 LxCmdLine()
 
 
@@ -43,7 +42,6 @@ class LxVersion(gdb.Command):
     def invoke(self, arg, from_tty):
         # linux_banner should contain a newline
         gdb.write(gdb.parse_and_eval("(char *)linux_banner").string())
-
 
 LxVersion()
 
@@ -88,7 +86,6 @@ Equivalent to cat /proc/iomem on a running target"""
     def invoke(self, arg, from_tty):
         return show_lx_resources("iomem_resource")
 
-
 LxIOMem()
 
 
@@ -102,7 +99,6 @@ Equivalent to cat /proc/ioports on a running target"""
 
     def invoke(self, arg, from_tty):
         return show_lx_resources("ioport_resource")
-
 
 LxIOPorts()
 
@@ -153,7 +149,7 @@ values of that process namespace"""
         if len(argv) >= 1:
             try:
                 pid = int(argv[0])
-            except gdb.error:
+            except:
                 raise gdb.GdbError("Provide a PID as integer value")
         else:
             pid = 1
@@ -198,7 +194,6 @@ values of that process namespace"""
                         rd,
                         info_opts(FS_INFO, s_flags),
                         info_opts(MNT_INFO, m_flags)))
-
 
 LxMounts()
 
@@ -264,13 +259,12 @@ class LxFdtDump(gdb.Command):
 
         try:
             f = open(filename, 'wb')
-        except gdb.error:
+        except:
             raise gdb.GdbError("Could not open file to dump fdt")
 
         f.write(fdt_buf)
         f.close()
 
         gdb.write("Dumped fdt blob to " + filename + "\n")
-
 
 LxFdtDump()

@@ -1,8 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Cryptographic API for algorithms (i.e., low-level API).
  *
  * Copyright (c) 2006 Herbert Xu <herbert@gondor.apana.org.au>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation; either version 2 of the License, or (at your option)
+ * any later version.
+ *
  */
 
 #include <crypto/algapi.h>
@@ -21,6 +26,23 @@
 
 static LIST_HEAD(crypto_template_list);
 
+static inline int crypto_set_driver_name(struct crypto_alg *alg)
+{
+	static const char suffix[] = "-generic";
+	char *driver_name = alg->cra_driver_name;
+	int len;
+
+	if (*driver_name)
+		return 0;
+
+	len = strlcpy(driver_name, alg->cra_name, CRYPTO_MAX_ALG_NAME);
+	if (len + sizeof(suffix) > CRYPTO_MAX_ALG_NAME)
+		return -ENAMETOOLONG;
+
+	memcpy(driver_name + len, suffix, sizeof(suffix));
+	return 0;
+}
+
 static inline void crypto_check_module_sig(struct module *mod)
 {
 	if (fips_enabled && mod && !module_sig_ok(mod))
@@ -31,9 +53,6 @@ static inline void crypto_check_module_sig(struct module *mod)
 static int crypto_check_alg(struct crypto_alg *alg)
 {
 	crypto_check_module_sig(alg->cra_module);
-
-	if (!alg->cra_name[0] || !alg->cra_driver_name[0])
-		return -EINVAL;
 
 	if (alg->cra_alignmask & (alg->cra_alignmask + 1))
 		return -EINVAL;
@@ -60,7 +79,7 @@ static int crypto_check_alg(struct crypto_alg *alg)
 
 	refcount_set(&alg->cra_refcnt, 1);
 
-	return 0;
+	return crypto_set_driver_name(alg);
 }
 
 static void crypto_free_instance(struct crypto_instance *inst)
@@ -932,6 +951,19 @@ struct crypto_async_request *crypto_dequeue_request(struct crypto_queue *queue)
 	return list_entry(request, struct crypto_async_request, list);
 }
 EXPORT_SYMBOL_GPL(crypto_dequeue_request);
+
+int crypto_tfm_in_queue(struct crypto_queue *queue, struct crypto_tfm *tfm)
+{
+	struct crypto_async_request *req;
+
+	list_for_each_entry(req, &queue->list, list) {
+		if (req->tfm == tfm)
+			return 1;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(crypto_tfm_in_queue);
 
 static inline void crypto_inc_byte(u8 *a, unsigned int size)
 {

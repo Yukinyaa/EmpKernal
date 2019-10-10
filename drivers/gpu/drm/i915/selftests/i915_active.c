@@ -4,9 +4,7 @@
  * Copyright © 2018 Intel Corporation
  */
 
-#include "gem/i915_gem_pm.h"
-
-#include "i915_selftest.h"
+#include "../i915_selftest.h"
 
 #include "igt_flush_test.h"
 #include "lib_sw_fence.h"
@@ -48,7 +46,7 @@ static int __live_active_setup(struct drm_i915_private *i915,
 	for_each_engine(engine, i915, id) {
 		struct i915_request *rq;
 
-		rq = i915_request_create(engine->kernel_context);
+		rq = i915_request_alloc(engine, i915->kernel_context);
 		if (IS_ERR(rq)) {
 			err = PTR_ERR(rq);
 			break;
@@ -97,7 +95,7 @@ static int live_active_wait(void *arg)
 	/* Check that we get a callback when requests retire upon waiting */
 
 	mutex_lock(&i915->drm.struct_mutex);
-	wakeref = intel_runtime_pm_get(&i915->runtime_pm);
+	wakeref = intel_runtime_pm_get(i915);
 
 	err = __live_active_setup(i915, &active);
 
@@ -111,7 +109,7 @@ static int live_active_wait(void *arg)
 	if (igt_flush_test(i915, I915_WAIT_LOCKED))
 		err = -EIO;
 
-	intel_runtime_pm_put(&i915->runtime_pm, wakeref);
+	intel_runtime_pm_put(i915, wakeref);
 	mutex_unlock(&i915->drm.struct_mutex);
 	return err;
 }
@@ -126,7 +124,7 @@ static int live_active_retire(void *arg)
 	/* Check that we get a callback when requests are indirectly retired */
 
 	mutex_lock(&i915->drm.struct_mutex);
-	wakeref = intel_runtime_pm_get(&i915->runtime_pm);
+	wakeref = intel_runtime_pm_get(i915);
 
 	err = __live_active_setup(i915, &active);
 
@@ -140,7 +138,7 @@ static int live_active_retire(void *arg)
 	}
 
 	i915_active_fini(&active.base);
-	intel_runtime_pm_put(&i915->runtime_pm, wakeref);
+	intel_runtime_pm_put(i915, wakeref);
 	mutex_unlock(&i915->drm.struct_mutex);
 	return err;
 }
@@ -152,7 +150,7 @@ int i915_active_live_selftests(struct drm_i915_private *i915)
 		SUBTEST(live_active_retire),
 	};
 
-	if (i915_terminally_wedged(i915))
+	if (i915_terminally_wedged(&i915->gpu_error))
 		return 0;
 
 	return i915_subtests(tests, i915);

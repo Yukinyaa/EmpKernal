@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * include/linux/uio_driver.h
  *
@@ -8,6 +7,8 @@
  * Copyright(C) 2006, Greg Kroah-Hartman <greg@kroah.com>
  *
  * Userspace IO driver.
+ *
+ * Licensed under the GPLv2 only.
  */
 
 #ifndef _UIO_DRIVER_H_

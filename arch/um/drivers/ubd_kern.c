@@ -276,14 +276,14 @@ static int ubd_setup_common(char *str, int *index_out, char **error_out)
 		str++;
 		if(!strcmp(str, "sync")){
 			global_openflags = of_sync(global_openflags);
-			return err;
+			goto out1;
 		}
 
 		err = -EINVAL;
 		major = simple_strtoul(str, &end, 0);
 		if((*end != '\0') || (end == str)){
 			*error_out = "Didn't parse major number";
-			return err;
+			goto out1;
 		}
 
 		mutex_lock(&ubd_lock);

@@ -41,13 +41,11 @@ static struct svc_program nfs4_callback_program;
 
 static int nfs4_callback_up_net(struct svc_serv *serv, struct net *net)
 {
-	const struct cred *cred = current_cred();
 	int ret;
 	struct nfs_net *nn = net_generic(net, nfs_net_id);
 
 	ret = svc_create_xprt(serv, "tcp", net, PF_INET,
-				nfs_callback_set_tcpport, SVC_SOCK_ANONYMOUS,
-				cred);
+				nfs_callback_set_tcpport, SVC_SOCK_ANONYMOUS);
 	if (ret <= 0)
 		goto out_err;
 	nn->nfs_callback_tcpport = ret;
@@ -55,8 +53,7 @@ static int nfs4_callback_up_net(struct svc_serv *serv, struct net *net)
 		nn->nfs_callback_tcpport, PF_INET, net->ns.inum);
 
 	ret = svc_create_xprt(serv, "tcp", net, PF_INET6,
-				nfs_callback_set_tcpport, SVC_SOCK_ANONYMOUS,
-				cred);
+				nfs_callback_set_tcpport, SVC_SOCK_ANONYMOUS);
 	if (ret > 0) {
 		nn->nfs_callback_tcpport6 = ret;
 		dprintk("NFS: Callback listener port = %u (af %u, net %x)\n",
@@ -460,6 +457,4 @@ static struct svc_program nfs4_callback_program = {
 	.pg_class = "nfs",				/* authentication class */
 	.pg_stats = &nfs4_callback_stats,
 	.pg_authenticate = nfs_callback_authenticate,
-	.pg_init_request = svc_generic_init_request,
-	.pg_rpcbind_set	= svc_generic_rpcbind_set,
 };

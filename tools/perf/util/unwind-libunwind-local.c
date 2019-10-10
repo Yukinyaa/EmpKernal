@@ -25,7 +25,6 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <linux/list.h>
-#include <linux/zalloc.h>
 #ifndef REMOTE_UNWIND_LIBUNWIND
 #include <libunwind.h>
 #include <libunwind-ptrace.h>
@@ -346,7 +345,7 @@ static int read_unwind_spec_debug_frame(struct dso *dso,
 							__func__,
 							dso->symsrc_filename,
 							debuglink);
-					zfree(&dso->symsrc_filename);
+					free(dso->symsrc_filename);
 				}
 				dso->symsrc_filename = debuglink;
 			} else {
@@ -618,6 +617,8 @@ static unw_accessors_t accessors = {
 
 static int _unwind__prepare_access(struct thread *thread)
 {
+	if (!dwarf_callchain_users)
+		return 0;
 	thread->addr_space = unw_create_addr_space(&accessors, 0);
 	if (!thread->addr_space) {
 		pr_err("unwind: Can't create unwind address space.\n");
@@ -630,11 +631,15 @@ static int _unwind__prepare_access(struct thread *thread)
 
 static void _unwind__flush_access(struct thread *thread)
 {
+	if (!dwarf_callchain_users)
+		return;
 	unw_flush_cache(thread->addr_space, 0, 0);
 }
 
 static void _unwind__finish_access(struct thread *thread)
 {
+	if (!dwarf_callchain_users)
+		return;
 	unw_destroy_addr_space(thread->addr_space);
 }
 

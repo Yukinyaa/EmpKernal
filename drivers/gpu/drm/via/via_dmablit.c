@@ -243,8 +243,7 @@ via_lock_all_dma_pages(drm_via_sg_info_t *vsg,  drm_via_dmablit_t *xfer)
 	if (NULL == vsg->pages)
 		return -ENOMEM;
 	ret = get_user_pages_fast((unsigned long)xfer->mem_addr,
-			vsg->num_pages,
-			vsg->direction == DMA_FROM_DEVICE ? FOLL_WRITE : 0,
+			vsg->num_pages, vsg->direction == DMA_FROM_DEVICE,
 			vsg->pages);
 	if (ret != vsg->num_pages) {
 		if (ret < 0)

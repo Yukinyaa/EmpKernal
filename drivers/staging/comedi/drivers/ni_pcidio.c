@@ -310,6 +310,7 @@ static int ni_pcidio_request_di_mite_channel(struct comedi_device *dev)
 	writeb(primary_DMAChannel_bits(devpriv->di_mite_chan->channel) |
 	       secondary_DMAChannel_bits(devpriv->di_mite_chan->channel),
 	       dev->mmio + DMA_LINE_CONTROL_GROUP1);
+	mmiowb();
 	spin_unlock_irqrestore(&devpriv->mite_channel_lock, flags);
 	return 0;
 }
@@ -326,6 +327,7 @@ static void ni_pcidio_release_di_mite_channel(struct comedi_device *dev)
 		writeb(primary_DMAChannel_bits(0) |
 		       secondary_DMAChannel_bits(0),
 		       dev->mmio + DMA_LINE_CONTROL_GROUP1);
+		mmiowb();
 	}
 	spin_unlock_irqrestore(&devpriv->mite_channel_lock, flags);
 }

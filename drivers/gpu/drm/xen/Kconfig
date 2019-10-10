@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 config DRM_XEN
 	bool "DRM Support for Xen guest OS"
 	depends on XEN

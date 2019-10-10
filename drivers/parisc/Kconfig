@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 menu "Bus options (PCI, PCMCIA, EISA, GSC, ISA)"
 
 config GSC

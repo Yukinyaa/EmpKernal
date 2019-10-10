@@ -1,30 +1,35 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
 * Analogix DP (Display Port) core interface driver.
 *
 * Copyright (C) 2012 Samsung Electronics Co., Ltd.
 * Author: Jingoo Han <jg1.han@samsung.com>
+*
+* This program is free software; you can redistribute it and/or modify it
+* under the terms of the GNU General Public License as published by the
+* Free Software Foundation; either version 2 of the License, or (at your
+* option) any later version.
 */
 
-#include <linux/clk.h>
-#include <linux/component.h>
+#include <linux/module.h>
+#include <linux/platform_device.h>
 #include <linux/err.h>
-#include <linux/gpio/consumer.h>
-#include <linux/interrupt.h>
+#include <linux/clk.h>
 #include <linux/io.h>
 #include <linux/iopoll.h>
-#include <linux/module.h>
+#include <linux/interrupt.h>
 #include <linux/of.h>
+#include <linux/of_gpio.h>
+#include <linux/gpio.h>
+#include <linux/component.h>
 #include <linux/phy/phy.h>
-#include <linux/platform_device.h>
 
-#include <drm/bridge/analogix_dp.h>
+#include <drm/drmP.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc.h>
-#include <drm/drm_device.h>
 #include <drm/drm_panel.h>
-#include <drm/drm_print.h>
 #include <drm/drm_probe_helper.h>
+
+#include <drm/bridge/analogix_dp.h>
 
 #include "analogix_dp_core.h"
 #include "analogix_dp_reg.h"
@@ -110,7 +115,7 @@ EXPORT_SYMBOL_GPL(analogix_dp_psr_enabled);
 
 int analogix_dp_enable_psr(struct analogix_dp_device *dp)
 {
-	struct dp_sdp psr_vsc;
+	struct edp_vsc_psr psr_vsc;
 
 	if (!dp->psr_enable)
 		return 0;
@@ -122,8 +127,8 @@ int analogix_dp_enable_psr(struct analogix_dp_device *dp)
 	psr_vsc.sdp_header.HB2 = 0x2;
 	psr_vsc.sdp_header.HB3 = 0x8;
 
-	psr_vsc.db[0] = 0;
-	psr_vsc.db[1] = EDP_VSC_PSR_STATE_ACTIVE | EDP_VSC_PSR_CRC_VALUES_VALID;
+	psr_vsc.DB0 = 0;
+	psr_vsc.DB1 = EDP_VSC_PSR_STATE_ACTIVE | EDP_VSC_PSR_CRC_VALUES_VALID;
 
 	return analogix_dp_send_psr_spd(dp, &psr_vsc, true);
 }
@@ -131,7 +136,7 @@ EXPORT_SYMBOL_GPL(analogix_dp_enable_psr);
 
 int analogix_dp_disable_psr(struct analogix_dp_device *dp)
 {
-	struct dp_sdp psr_vsc;
+	struct edp_vsc_psr psr_vsc;
 	int ret;
 
 	if (!dp->psr_enable)
@@ -144,8 +149,8 @@ int analogix_dp_disable_psr(struct analogix_dp_device *dp)
 	psr_vsc.sdp_header.HB2 = 0x2;
 	psr_vsc.sdp_header.HB3 = 0x8;
 
-	psr_vsc.db[0] = 0;
-	psr_vsc.db[1] = 0;
+	psr_vsc.DB0 = 0;
+	psr_vsc.DB1 = 0;
 
 	ret = drm_dp_dpcd_writeb(&dp->aux, DP_SET_POWER, DP_SET_POWER_D0);
 	if (ret != 1) {
@@ -1406,6 +1411,8 @@ static void analogix_dp_bridge_mode_set(struct drm_bridge *bridge,
 		video->color_space = COLOR_YCBCR444;
 	else if (display_info->color_formats & DRM_COLOR_FORMAT_YCRCB422)
 		video->color_space = COLOR_YCBCR422;
+	else if (display_info->color_formats & DRM_COLOR_FORMAT_RGB444)
+		video->color_space = COLOR_RGB;
 	else
 		video->color_space = COLOR_RGB;
 
@@ -1578,18 +1585,12 @@ analogix_dp_bind(struct device *dev, struct drm_device *drm_dev,
 
 	dp->force_hpd = of_property_read_bool(dev->of_node, "force-hpd");
 
-	/* Try two different names */
-	dp->hpd_gpiod = devm_gpiod_get_optional(dev, "hpd", GPIOD_IN);
-	if (!dp->hpd_gpiod)
-		dp->hpd_gpiod = devm_gpiod_get_optional(dev, "samsung,hpd",
-							GPIOD_IN);
-	if (IS_ERR(dp->hpd_gpiod)) {
-		dev_err(dev, "error getting HDP GPIO: %ld\n",
-			PTR_ERR(dp->hpd_gpiod));
-		return ERR_CAST(dp->hpd_gpiod);
-	}
+	dp->hpd_gpio = of_get_named_gpio(dev->of_node, "hpd-gpios", 0);
+	if (!gpio_is_valid(dp->hpd_gpio))
+		dp->hpd_gpio = of_get_named_gpio(dev->of_node,
+						 "samsung,hpd-gpio", 0);
 
-	if (dp->hpd_gpiod) {
+	if (gpio_is_valid(dp->hpd_gpio)) {
 		/*
 		 * Set up the hotplug GPIO from the device tree as an interrupt.
 		 * Simply specifying a different interrupt in the device tree
@@ -1597,9 +1598,16 @@ analogix_dp_bind(struct device *dev, struct drm_device *drm_dev,
 		 * using a GPIO.  We also need the actual GPIO specifier so
 		 * that we can get the current state of the GPIO.
 		 */
-		dp->irq = gpiod_to_irq(dp->hpd_gpiod);
+		ret = devm_gpio_request_one(&pdev->dev, dp->hpd_gpio, GPIOF_IN,
+					    "hpd_gpio");
+		if (ret) {
+			dev_err(&pdev->dev, "failed to get hpd gpio\n");
+			return ERR_PTR(ret);
+		}
+		dp->irq = gpio_to_irq(dp->hpd_gpio);
 		irq_flags = IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING;
 	} else {
+		dp->hpd_gpio = -ENODEV;
 		dp->irq = platform_get_irq(pdev, 0);
 		irq_flags = 0;
 	}

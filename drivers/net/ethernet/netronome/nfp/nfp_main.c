@@ -294,9 +294,6 @@ static int nfp_pcie_sriov_disable(struct pci_dev *pdev)
 
 static int nfp_pcie_sriov_configure(struct pci_dev *pdev, int num_vfs)
 {
-	if (!pci_get_drvdata(pdev))
-		return -ENOENT;
-
 	if (num_vfs == 0)
 		return nfp_pcie_sriov_disable(pdev);
 	else
@@ -596,10 +593,6 @@ static int nfp_pci_probe(struct pci_dev *pdev,
 	struct nfp_pf *pf;
 	int err;
 
-	if (pdev->vendor == PCI_VENDOR_ID_NETRONOME &&
-	    pdev->device == PCI_DEVICE_ID_NETRONOME_NFP6000_VF)
-		dev_warn(&pdev->dev, "Binding NFP VF device to the NFP PF driver, the VF driver is called 'nfp_netvf'\n");
-
 	err = pci_enable_device(pdev);
 	if (err < 0)
 		return err;
@@ -727,13 +720,9 @@ err_pci_disable:
 	return err;
 }
 
-static void __nfp_pci_shutdown(struct pci_dev *pdev, bool unload_fw)
+static void nfp_pci_remove(struct pci_dev *pdev)
 {
-	struct nfp_pf *pf;
-
-	pf = pci_get_drvdata(pdev);
-	if (!pf)
-		return;
+	struct nfp_pf *pf = pci_get_drvdata(pdev);
 
 	nfp_hwmon_unregister(pf);
 
@@ -744,7 +733,7 @@ static void __nfp_pci_shutdown(struct pci_dev *pdev, bool unload_fw)
 	vfree(pf->dumpspec);
 	kfree(pf->rtbl);
 	nfp_mip_close(pf->mip);
-	if (unload_fw && pf->fw_loaded)
+	if (pf->fw_loaded)
 		nfp_fw_unload(pf);
 
 	destroy_workqueue(pf->wq);
@@ -760,22 +749,11 @@ static void __nfp_pci_shutdown(struct pci_dev *pdev, bool unload_fw)
 	pci_disable_device(pdev);
 }
 
-static void nfp_pci_remove(struct pci_dev *pdev)
-{
-	__nfp_pci_shutdown(pdev, true);
-}
-
-static void nfp_pci_shutdown(struct pci_dev *pdev)
-{
-	__nfp_pci_shutdown(pdev, false);
-}
-
 static struct pci_driver nfp_pci_driver = {
 	.name			= nfp_driver_name,
 	.id_table		= nfp_pci_device_ids,
 	.probe			= nfp_pci_probe,
 	.remove			= nfp_pci_remove,
-	.shutdown		= nfp_pci_shutdown,
 	.sriov_configure	= nfp_pcie_sriov_configure,
 };
 

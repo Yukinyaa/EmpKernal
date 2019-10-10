@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * linux/drivers/leds-pwm.c
  *
@@ -7,6 +6,10 @@
  * Copyright 2009 Luotao Fu @ Pengutronix (l.fu@pengutronix.de)
  *
  * based on leds-gpio.c by Raphael Assenat <raph@8d.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -72,7 +75,7 @@ static inline size_t sizeof_pwm_leds_priv(int num_leds)
 }
 
 static int led_pwm_add(struct device *dev, struct led_pwm_priv *priv,
-		       struct led_pwm *led, struct fwnode_handle *fwnode)
+		       struct led_pwm *led, struct device_node *child)
 {
 	struct led_pwm_data *led_data = &priv->leds[priv->num_leds];
 	struct pwm_args pargs;
@@ -85,8 +88,8 @@ static int led_pwm_add(struct device *dev, struct led_pwm_priv *priv,
 	led_data->cdev.max_brightness = led->max_brightness;
 	led_data->cdev.flags = LED_CORE_SUSPENDRESUME;
 
-	if (fwnode)
-		led_data->pwm = devm_fwnode_pwm_get(dev, fwnode, NULL);
+	if (child)
+		led_data->pwm = devm_of_pwm_get(dev, child, NULL);
 	else
 		led_data->pwm = devm_pwm_get(dev, led->name);
 	if (IS_ERR(led_data->pwm)) {
@@ -111,8 +114,7 @@ static int led_pwm_add(struct device *dev, struct led_pwm_priv *priv,
 	if (!led_data->period && (led->pwm_period_ns > 0))
 		led_data->period = led->pwm_period_ns;
 
-	ret = devm_of_led_classdev_register(dev, to_of_node(fwnode),
-					    &led_data->cdev);
+	ret = devm_of_led_classdev_register(dev, child, &led_data->cdev);
 	if (ret == 0) {
 		priv->num_leds++;
 		led_pwm_set(&led_data->cdev, led_data->cdev.brightness);
@@ -124,35 +126,27 @@ static int led_pwm_add(struct device *dev, struct led_pwm_priv *priv,
 	return ret;
 }
 
-static int led_pwm_create_fwnode(struct device *dev, struct led_pwm_priv *priv)
+static int led_pwm_create_of(struct device *dev, struct led_pwm_priv *priv)
 {
-	struct fwnode_handle *fwnode;
+	struct device_node *child;
 	struct led_pwm led;
 	int ret = 0;
 
 	memset(&led, 0, sizeof(led));
 
-	device_for_each_child_node(dev, fwnode) {
-		ret = fwnode_property_read_string(fwnode, "label", &led.name);
-		if (ret && is_of_node(fwnode))
-			led.name = to_of_node(fwnode)->name;
+	for_each_child_of_node(dev->of_node, child) {
+		led.name = of_get_property(child, "label", NULL) ? :
+			   child->name;
 
-		if (!led.name) {
-			fwnode_handle_put(fwnode);
-			return -EINVAL;
-		}
+		led.default_trigger = of_get_property(child,
+						"linux,default-trigger", NULL);
+		led.active_low = of_property_read_bool(child, "active-low");
+		of_property_read_u32(child, "max-brightness",
+				     &led.max_brightness);
 
-		fwnode_property_read_string(fwnode, "linux,default-trigger",
-					    &led.default_trigger);
-
-		led.active_low = fwnode_property_read_bool(fwnode,
-							   "active-low");
-		fwnode_property_read_u32(fwnode, "max-brightness",
-					 &led.max_brightness);
-
-		ret = led_pwm_add(dev, priv, &led, fwnode);
+		ret = led_pwm_add(dev, priv, &led, child);
 		if (ret) {
-			fwnode_handle_put(fwnode);
+			of_node_put(child);
 			break;
 		}
 	}
@@ -170,7 +164,7 @@ static int led_pwm_probe(struct platform_device *pdev)
 	if (pdata)
 		count = pdata->num_leds;
 	else
-		count = device_get_child_node_count(&pdev->dev);
+		count = of_get_child_count(pdev->dev.of_node);
 
 	if (!count)
 		return -EINVAL;
@@ -188,7 +182,7 @@ static int led_pwm_probe(struct platform_device *pdev)
 				break;
 		}
 	} else {
-		ret = led_pwm_create_fwnode(&pdev->dev, priv);
+		ret = led_pwm_create_of(&pdev->dev, priv);
 	}
 
 	if (ret)

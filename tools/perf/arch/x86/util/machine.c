@@ -3,11 +3,10 @@
 #include <linux/string.h>
 #include <stdlib.h>
 
-#include "../../util/util.h"
 #include "../../util/machine.h"
 #include "../../util/map.h"
 #include "../../util/symbol.h"
-#include <linux/ctype.h>
+#include "../../util/sane_ctype.h"
 
 #include <symbol/kallsyms.h>
 

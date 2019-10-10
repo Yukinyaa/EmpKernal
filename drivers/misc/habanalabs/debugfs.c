@@ -355,7 +355,7 @@ static int mmu_show(struct seq_file *s, void *data)
 	struct hl_debugfs_entry *entry = s->private;
 	struct hl_dbg_device_entry *dev_entry = entry->dev_entry;
 	struct hl_device *hdev = dev_entry->hdev;
-	struct hl_ctx *ctx;
+	struct hl_ctx *ctx = hdev->user_ctx;
 
 	u64 hop0_addr = 0, hop0_pte_addr = 0, hop0_pte = 0,
 		hop1_addr = 0, hop1_pte_addr = 0, hop1_pte = 0,
@@ -366,11 +366,6 @@ static int mmu_show(struct seq_file *s, void *data)
 
 	if (!hdev->mmu_enable)
 		return 0;
-
-	if (dev_entry->mmu_asid == HL_KERNEL_ASID_ID)
-		ctx = hdev->kernel_ctx;
-	else
-		ctx = hdev->user_ctx;
 
 	if (!ctx) {
 		dev_err(hdev->dev, "no ctx available\n");
@@ -464,31 +459,41 @@ static ssize_t mmu_write(struct file *file, const char __user *buf,
 	struct hl_debugfs_entry *entry = s->private;
 	struct hl_dbg_device_entry *dev_entry = entry->dev_entry;
 	struct hl_device *hdev = dev_entry->hdev;
-	char kbuf[MMU_KBUF_SIZE];
+	char kbuf[MMU_KBUF_SIZE], asid_kbuf[MMU_ASID_BUF_SIZE],
+		addr_kbuf[MMU_ADDR_BUF_SIZE];
 	char *c;
 	ssize_t rc;
 
 	if (!hdev->mmu_enable)
 		return count;
 
-	if (count > sizeof(kbuf) - 1)
-		goto err;
+	memset(kbuf, 0, sizeof(kbuf));
+	memset(asid_kbuf, 0, sizeof(asid_kbuf));
+	memset(addr_kbuf, 0, sizeof(addr_kbuf));
+
 	if (copy_from_user(kbuf, buf, count))
 		goto err;
-	kbuf[count] = 0;
+
+	kbuf[MMU_KBUF_SIZE - 1] = 0;
 
 	c = strchr(kbuf, ' ');
 	if (!c)
 		goto err;
-	*c = '\0';
 
-	rc = kstrtouint(kbuf, 10, &dev_entry->mmu_asid);
+	memcpy(asid_kbuf, kbuf, c - kbuf);
+
+	rc = kstrtouint(asid_kbuf, 10, &dev_entry->mmu_asid);
 	if (rc)
 		goto err;
 
-	if (strncmp(c+1, "0x", 2))
+	c = strstr(kbuf, " 0x");
+	if (!c)
 		goto err;
-	rc = kstrtoull(c+3, 16, &dev_entry->mmu_addr);
+
+	c += 3;
+	memcpy(addr_kbuf, c, (kbuf + count) - c);
+
+	rc = kstrtoull(addr_kbuf, 16, &dev_entry->mmu_addr);
 	if (rc)
 		goto err;
 
@@ -500,132 +505,30 @@ err:
 	return -EINVAL;
 }
 
-static int engines_show(struct seq_file *s, void *data)
-{
-	struct hl_debugfs_entry *entry = s->private;
-	struct hl_dbg_device_entry *dev_entry = entry->dev_entry;
-	struct hl_device *hdev = dev_entry->hdev;
-
-	hdev->asic_funcs->is_device_idle(hdev, NULL, s);
-
-	return 0;
-}
-
-static bool hl_is_device_va(struct hl_device *hdev, u64 addr)
-{
-	struct asic_fixed_properties *prop = &hdev->asic_prop;
-
-	if (!hdev->mmu_enable)
-		goto out;
-
-	if (hdev->dram_supports_virtual_memory &&
-			addr >= prop->va_space_dram_start_address &&
-			addr < prop->va_space_dram_end_address)
-		return true;
-
-	if (addr >= prop->va_space_host_start_address &&
-			addr < prop->va_space_host_end_address)
-		return true;
-out:
-	return false;
-}
-
-static int device_va_to_pa(struct hl_device *hdev, u64 virt_addr,
-				u64 *phys_addr)
-{
-	struct hl_ctx *ctx = hdev->user_ctx;
-	u64 hop_addr, hop_pte_addr, hop_pte;
-	u64 offset_mask = HOP4_MASK | OFFSET_MASK;
-	int rc = 0;
-
-	if (!ctx) {
-		dev_err(hdev->dev, "no ctx available\n");
-		return -EINVAL;
-	}
-
-	mutex_lock(&ctx->mmu_lock);
-
-	/* hop 0 */
-	hop_addr = get_hop0_addr(ctx);
-	hop_pte_addr = get_hop0_pte_addr(ctx, hop_addr, virt_addr);
-	hop_pte = hdev->asic_funcs->read_pte(hdev, hop_pte_addr);
-
-	/* hop 1 */
-	hop_addr = get_next_hop_addr(hop_pte);
-	if (hop_addr == ULLONG_MAX)
-		goto not_mapped;
-	hop_pte_addr = get_hop1_pte_addr(ctx, hop_addr, virt_addr);
-	hop_pte = hdev->asic_funcs->read_pte(hdev, hop_pte_addr);
-
-	/* hop 2 */
-	hop_addr = get_next_hop_addr(hop_pte);
-	if (hop_addr == ULLONG_MAX)
-		goto not_mapped;
-	hop_pte_addr = get_hop2_pte_addr(ctx, hop_addr, virt_addr);
-	hop_pte = hdev->asic_funcs->read_pte(hdev, hop_pte_addr);
-
-	/* hop 3 */
-	hop_addr = get_next_hop_addr(hop_pte);
-	if (hop_addr == ULLONG_MAX)
-		goto not_mapped;
-	hop_pte_addr = get_hop3_pte_addr(ctx, hop_addr, virt_addr);
-	hop_pte = hdev->asic_funcs->read_pte(hdev, hop_pte_addr);
-
-	if (!(hop_pte & LAST_MASK)) {
-		/* hop 4 */
-		hop_addr = get_next_hop_addr(hop_pte);
-		if (hop_addr == ULLONG_MAX)
-			goto not_mapped;
-		hop_pte_addr = get_hop4_pte_addr(ctx, hop_addr, virt_addr);
-		hop_pte = hdev->asic_funcs->read_pte(hdev, hop_pte_addr);
-
-		offset_mask = OFFSET_MASK;
-	}
-
-	if (!(hop_pte & PAGE_PRESENT_MASK))
-		goto not_mapped;
-
-	*phys_addr = (hop_pte & ~offset_mask) | (virt_addr & offset_mask);
-
-	goto out;
-
-not_mapped:
-	dev_err(hdev->dev, "virt addr 0x%llx is not mapped to phys addr\n",
-			virt_addr);
-	rc = -EINVAL;
-out:
-	mutex_unlock(&ctx->mmu_lock);
-	return rc;
-}
-
 static ssize_t hl_data_read32(struct file *f, char __user *buf,
 					size_t count, loff_t *ppos)
 {
 	struct hl_dbg_device_entry *entry = file_inode(f)->i_private;
 	struct hl_device *hdev = entry->hdev;
 	char tmp_buf[32];
-	u64 addr = entry->addr;
 	u32 val;
 	ssize_t rc;
 
 	if (*ppos)
 		return 0;
 
-	if (hl_is_device_va(hdev, addr)) {
-		rc = device_va_to_pa(hdev, addr, &addr);
-		if (rc)
-			return rc;
-	}
-
-	rc = hdev->asic_funcs->debugfs_read32(hdev, addr, &val);
+	rc = hdev->asic_funcs->debugfs_read32(hdev, entry->addr, &val);
 	if (rc) {
-		dev_err(hdev->dev, "Failed to read from 0x%010llx\n", addr);
+		dev_err(hdev->dev, "Failed to read from 0x%010llx\n",
+			entry->addr);
 		return rc;
 	}
 
 	sprintf(tmp_buf, "0x%08x\n", val);
-	return simple_read_from_buffer(buf, count, ppos, tmp_buf,
-			strlen(tmp_buf));
+	rc = simple_read_from_buffer(buf, strlen(tmp_buf) + 1, ppos, tmp_buf,
+			strlen(tmp_buf) + 1);
+
+	return rc;
 }
 
 static ssize_t hl_data_write32(struct file *f, const char __user *buf,
@@ -633,7 +536,6 @@ static ssize_t hl_data_write32(struct file *f, const char __user *buf,
 {
 	struct hl_dbg_device_entry *entry = file_inode(f)->i_private;
 	struct hl_device *hdev = entry->hdev;
-	u64 addr = entry->addr;
 	u32 value;
 	ssize_t rc;
 
@@ -641,16 +543,10 @@ static ssize_t hl_data_write32(struct file *f, const char __user *buf,
 	if (rc)
 		return rc;
 
-	if (hl_is_device_va(hdev, addr)) {
-		rc = device_va_to_pa(hdev, addr, &addr);
-		if (rc)
-			return rc;
-	}
-
-	rc = hdev->asic_funcs->debugfs_write32(hdev, addr, value);
+	rc = hdev->asic_funcs->debugfs_write32(hdev, entry->addr, value);
 	if (rc) {
 		dev_err(hdev->dev, "Failed to write 0x%08x to 0x%010llx\n",
-			value, addr);
+			value, entry->addr);
 		return rc;
 	}
 
@@ -663,6 +559,7 @@ static ssize_t hl_get_power_state(struct file *f, char __user *buf,
 	struct hl_dbg_device_entry *entry = file_inode(f)->i_private;
 	struct hl_device *hdev = entry->hdev;
 	char tmp_buf[200];
+	ssize_t rc;
 	int i;
 
 	if (*ppos)
@@ -677,8 +574,10 @@ static ssize_t hl_get_power_state(struct file *f, char __user *buf,
 
 	sprintf(tmp_buf,
 		"current power state: %d\n1 - D0\n2 - D3hot\n3 - Unknown\n", i);
-	return simple_read_from_buffer(buf, count, ppos, tmp_buf,
-			strlen(tmp_buf));
+	rc = simple_read_from_buffer(buf, strlen(tmp_buf) + 1, ppos, tmp_buf,
+			strlen(tmp_buf) + 1);
+
+	return rc;
 }
 
 static ssize_t hl_set_power_state(struct file *f, const char __user *buf,
@@ -731,8 +630,8 @@ static ssize_t hl_i2c_data_read(struct file *f, char __user *buf,
 	}
 
 	sprintf(tmp_buf, "0x%02x\n", val);
-	rc = simple_read_from_buffer(buf, count, ppos, tmp_buf,
-			strlen(tmp_buf));
+	rc = simple_read_from_buffer(buf, strlen(tmp_buf) + 1, ppos, tmp_buf,
+			strlen(tmp_buf) + 1);
 
 	return rc;
 }
@@ -821,9 +720,18 @@ static ssize_t hl_led2_write(struct file *f, const char __user *buf,
 static ssize_t hl_device_read(struct file *f, char __user *buf,
 					size_t count, loff_t *ppos)
 {
-	static const char *help =
-		"Valid values: disable, enable, suspend, resume, cpu_timeout\n";
-	return simple_read_from_buffer(buf, count, ppos, help, strlen(help));
+	char tmp_buf[200];
+	ssize_t rc;
+
+	if (*ppos)
+		return 0;
+
+	sprintf(tmp_buf,
+		"Valid values: disable, enable, suspend, resume, cpu_timeout\n");
+	rc = simple_read_from_buffer(buf, strlen(tmp_buf) + 1, ppos, tmp_buf,
+			strlen(tmp_buf) + 1);
+
+	return rc;
 }
 
 static ssize_t hl_device_write(struct file *f, const char __user *buf,
@@ -831,7 +739,7 @@ static ssize_t hl_device_write(struct file *f, const char __user *buf,
 {
 	struct hl_dbg_device_entry *entry = file_inode(f)->i_private;
 	struct hl_device *hdev = entry->hdev;
-	char data[30] = {0};
+	char data[30];
 
 	/* don't allow partial writes */
 	if (*ppos != 0)
@@ -904,7 +812,6 @@ static const struct hl_info_list hl_debugfs_list[] = {
 	{"userptr", userptr_show, NULL},
 	{"vm", vm_show, NULL},
 	{"mmu", mmu_show, mmu_write},
-	{"engines", engines_show, NULL}
 };
 
 static int hl_debugfs_open(struct inode *inode, struct file *file)

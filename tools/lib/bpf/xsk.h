@@ -16,7 +16,6 @@
 #include <linux/if_xdp.h>
 
 #include "libbpf.h"
-#include "libbpf_util.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -36,10 +35,6 @@ struct name { \
 
 DEFINE_XSK_RING(xsk_ring_prod);
 DEFINE_XSK_RING(xsk_ring_cons);
-
-/* For a detailed explanation on the memory barriers associated with the
- * ring, please take a look at net/xdp/xsk_queue.h.
- */
 
 struct xsk_umem;
 struct xsk_socket;
@@ -110,7 +105,7 @@ static inline __u32 xsk_cons_nb_avail(struct xsk_ring_cons *r, __u32 nb)
 static inline size_t xsk_ring_prod__reserve(struct xsk_ring_prod *prod,
 					    size_t nb, __u32 *idx)
 {
-	if (xsk_prod_nb_free(prod, nb) < nb)
+	if (unlikely(xsk_prod_nb_free(prod, nb) < nb))
 		return 0;
 
 	*idx = prod->cached_prod;
@@ -121,10 +116,10 @@ static inline size_t xsk_ring_prod__reserve(struct xsk_ring_prod *prod,
 
 static inline void xsk_ring_prod__submit(struct xsk_ring_prod *prod, size_t nb)
 {
-	/* Make sure everything has been written to the ring before indicating
-	 * this to the kernel by writing the producer pointer.
+	/* Make sure everything has been written to the ring before signalling
+	 * this to the kernel.
 	 */
-	libbpf_smp_wmb();
+	smp_wmb();
 
 	*prod->producer += nb;
 }
@@ -134,11 +129,11 @@ static inline size_t xsk_ring_cons__peek(struct xsk_ring_cons *cons,
 {
 	size_t entries = xsk_cons_nb_avail(cons, nb);
 
-	if (entries > 0) {
+	if (likely(entries > 0)) {
 		/* Make sure we do not speculatively read the data before
 		 * we have received the packet buffers from the ring.
 		 */
-		libbpf_smp_rmb();
+		smp_rmb();
 
 		*idx = cons->cached_cons;
 		cons->cached_cons += entries;
@@ -149,11 +144,6 @@ static inline size_t xsk_ring_cons__peek(struct xsk_ring_cons *cons,
 
 static inline void xsk_ring_cons__release(struct xsk_ring_cons *cons, size_t nb)
 {
-	/* Make sure data has been read before indicating we are done
-	 * with the entries by updating the consumer pointer.
-	 */
-	libbpf_smp_rwmb();
-
 	*cons->consumer += nb;
 }
 
@@ -167,7 +157,7 @@ LIBBPF_API int xsk_socket__fd(const struct xsk_socket *xsk);
 
 #define XSK_RING_CONS__DEFAULT_NUM_DESCS      2048
 #define XSK_RING_PROD__DEFAULT_NUM_DESCS      2048
-#define XSK_UMEM__DEFAULT_FRAME_SHIFT    12 /* 4096 bytes */
+#define XSK_UMEM__DEFAULT_FRAME_SHIFT    11 /* 2048 bytes */
 #define XSK_UMEM__DEFAULT_FRAME_SIZE     (1 << XSK_UMEM__DEFAULT_FRAME_SHIFT)
 #define XSK_UMEM__DEFAULT_FRAME_HEADROOM 0
 

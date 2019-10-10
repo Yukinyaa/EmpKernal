@@ -1,6 +1,14 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (C) 2012 Regents of the University of California
+ *
+ *   This program is free software; you can redistribute it and/or
+ *   modify it under the terms of the GNU General Public License
+ *   as published by the Free Software Foundation, version 2.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
  *
  * This file was copied from include/asm-generic/uaccess.h
  */
@@ -15,7 +23,6 @@
 #include <linux/compiler.h>
 #include <linux/thread_info.h>
 #include <asm/byteorder.h>
-#include <asm/extable.h>
 #include <asm/asm.h>
 
 #define __enable_user_access()							\
@@ -31,10 +38,8 @@
  * For historical reasons, these macros are grossly misnamed.
  */
 
-#define MAKE_MM_SEG(s)	((mm_segment_t) { (s) })
-
-#define KERNEL_DS	MAKE_MM_SEG(~0UL)
-#define USER_DS		MAKE_MM_SEG(TASK_SIZE)
+#define KERNEL_DS	(~0UL)
+#define USER_DS		(TASK_SIZE)
 
 #define get_fs()	(current_thread_info()->addr_limit)
 
@@ -43,9 +48,9 @@ static inline void set_fs(mm_segment_t fs)
 	current_thread_info()->addr_limit = fs;
 }
 
-#define segment_eq(a, b) ((a).seg == (b).seg)
+#define segment_eq(a, b) ((a) == (b))
 
-#define user_addr_max()	(get_fs().seg)
+#define user_addr_max()	(get_fs())
 
 
 /**
@@ -77,7 +82,7 @@ static inline int __access_ok(unsigned long addr, unsigned long size)
 {
 	const mm_segment_t fs = get_fs();
 
-	return size <= fs.seg && addr <= fs.seg - size;
+	return (size <= fs) && (addr <= (fs - size));
 }
 
 /*
@@ -93,8 +98,21 @@ static inline int __access_ok(unsigned long addr, unsigned long size)
  * on our cache or tlb entries.
  */
 
-#define __LSW	0
+struct exception_table_entry {
+	unsigned long insn, fixup;
+};
+
+extern int fixup_exception(struct pt_regs *state);
+
+#if defined(__LITTLE_ENDIAN)
 #define __MSW	1
+#define __LSW	0
+#elif defined(__BIG_ENDIAN)
+#define __MSW	0
+#define	__LSW	1
+#else
+#error "Unknown endianness"
+#endif
 
 /*
  * The "__xxx" versions of the user access functions do not verify the address

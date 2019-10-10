@@ -330,7 +330,7 @@ enum {
  * This function dumps an entry indexed by @idx from a queue specified by the
  * queue descriptor @q.
  **/
-static void
+static inline void
 lpfc_debug_dump_qe(struct lpfc_queue *q, uint32_t idx)
 {
 	char line_buf[LPFC_LBUF_SZ];
@@ -345,7 +345,7 @@ lpfc_debug_dump_qe(struct lpfc_queue *q, uint32_t idx)
 
 	esize = q->entry_size;
 	qe_word_cnt = esize / sizeof(uint32_t);
-	pword = lpfc_sli4_qe(q, idx);
+	pword = q->qe[idx].address;
 
 	len = 0;
 	len += scnprintf(line_buf+len, LPFC_LBUF_SZ-len, "QE[%04d]: ", idx);

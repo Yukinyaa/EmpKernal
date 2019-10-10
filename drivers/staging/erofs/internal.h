@@ -44,12 +44,11 @@
 
 enum {
 	FAULT_KMALLOC,
-	FAULT_READ_IO,
 	FAULT_MAX,
 };
 
 #ifdef CONFIG_EROFS_FAULT_INJECTION
-extern const char *erofs_fault_name[FAULT_MAX];
+extern char *erofs_fault_name[FAULT_MAX];
 #define IS_FAULT_SET(fi, type) ((fi)->inject_type & (1 << (type)))
 
 struct erofs_fault_info {
@@ -115,8 +114,6 @@ struct erofs_sb_info {
 
 	u8 uuid[16];                    /* 128-bit uuid for volume */
 	u8 volume_name[16];             /* volume name */
-	u32 requirements;
-
 	char *dev_name;
 
 	unsigned int mount_opt;
@@ -271,15 +268,8 @@ int erofs_try_to_free_cached_page(struct address_space *mapping,
 				  struct page *page);
 
 #define MNGD_MAPPING(sbi)	((sbi)->managed_cache->i_mapping)
-static inline bool erofs_page_is_managed(const struct erofs_sb_info *sbi,
-					 struct page *page)
-{
-	return page->mapping == MNGD_MAPPING(sbi);
-}
 #else
 #define MNGD_MAPPING(sbi)	(NULL)
-static inline bool erofs_page_is_managed(const struct erofs_sb_info *sbi,
-					 struct page *page) { return false; }
 #endif
 
 #define DEFAULT_MAX_SYNC_DECOMPRESS_PAGES	3
@@ -321,10 +311,6 @@ static inline void z_erofs_exit_zip_subsystem(void) {}
 
 /* page count of a compressed cluster */
 #define erofs_clusterpages(sbi)         ((1 << (sbi)->clusterbits) / PAGE_SIZE)
-
-#define EROFS_PCPUBUF_NR_PAGES          Z_EROFS_CLUSTER_MAX_PAGES
-#else
-#define EROFS_PCPUBUF_NR_PAGES          0
 #endif
 
 typedef u64 erofs_off_t;
@@ -343,11 +329,9 @@ static inline erofs_off_t iloc(struct erofs_sb_info *sbi, erofs_nid_t nid)
 
 /* atomic flag definitions */
 #define EROFS_V_EA_INITED_BIT	0
-#define EROFS_V_Z_INITED_BIT	1
 
 /* bitlock definitions (arranged in reverse order) */
 #define EROFS_V_BL_XATTR_BIT	(BITS_PER_LONG - 1)
-#define EROFS_V_BL_Z_BIT	(BITS_PER_LONG - 2)
 
 struct erofs_vnode {
 	erofs_nid_t nid;
@@ -355,24 +339,16 @@ struct erofs_vnode {
 	/* atomic flags (including bitlocks) */
 	unsigned long flags;
 
-	unsigned char datamode;
+	unsigned char data_mapping_mode;
+	/* inline size in bytes */
 	unsigned char inode_isize;
 	unsigned short xattr_isize;
 
 	unsigned xattr_shared_count;
 	unsigned *xattr_shared_xattrs;
 
-	union {
-		erofs_blk_t raw_blkaddr;
-#ifdef CONFIG_EROFS_FS_ZIP
-		struct {
-			unsigned short z_advise;
-			unsigned char  z_algorithmtype[2];
-			unsigned char  z_logical_clusterbits;
-			unsigned char  z_physical_clusterbits[2];
-		};
-#endif
-	};
+	erofs_blk_t raw_blkaddr;
+
 	/* the corresponding vfs inode */
 	struct inode vfs_inode;
 };
@@ -397,14 +373,20 @@ static inline unsigned long inode_datablocks(struct inode *inode)
 	return DIV_ROUND_UP(inode->i_size, EROFS_BLKSIZ);
 }
 
-static inline bool is_inode_layout_compression(struct inode *inode)
+static inline bool is_inode_layout_plain(struct inode *inode)
 {
-	return erofs_inode_is_data_compressed(EROFS_V(inode)->datamode);
+	return EROFS_V(inode)->data_mapping_mode == EROFS_INODE_LAYOUT_PLAIN;
 }
 
-static inline bool is_inode_flat_inline(struct inode *inode)
+static inline bool is_inode_layout_compression(struct inode *inode)
 {
-	return EROFS_V(inode)->datamode == EROFS_INODE_FLAT_INLINE;
+	return EROFS_V(inode)->data_mapping_mode ==
+					EROFS_INODE_LAYOUT_COMPRESSION;
+}
+
+static inline bool is_inode_layout_inline(struct inode *inode)
+{
+	return EROFS_V(inode)->data_mapping_mode == EROFS_INODE_LAYOUT_INLINE;
 }
 
 extern const struct super_operations erofs_sops;
@@ -441,7 +423,6 @@ extern const struct address_space_operations z_erofs_vle_normalaccess_aops;
  */
 enum {
 	BH_Zipped = BH_PrivateStart,
-	BH_FullMapped,
 };
 
 /* Has a disk mapping */
@@ -450,8 +431,6 @@ enum {
 #define EROFS_MAP_META		(1 << BH_Meta)
 /* The extent has been compressed */
 #define EROFS_MAP_ZIPPED	(1 << BH_Zipped)
-/* The length of extent is full */
-#define EROFS_MAP_FULL_MAPPED	(1 << BH_FullMapped)
 
 struct erofs_map_blocks {
 	erofs_off_t m_pa, m_la;
@@ -465,14 +444,11 @@ struct erofs_map_blocks {
 /* Flags used by erofs_map_blocks() */
 #define EROFS_GET_BLOCKS_RAW    0x0001
 
-/* zmap.c */
 #ifdef CONFIG_EROFS_FS_ZIP
-int z_erofs_fill_inode(struct inode *inode);
 int z_erofs_map_blocks_iter(struct inode *inode,
 			    struct erofs_map_blocks *map,
 			    int flags);
 #else
-static inline int z_erofs_fill_inode(struct inode *inode) { return -ENOTSUPP; }
 static inline int z_erofs_map_blocks_iter(struct inode *inode,
 					  struct erofs_map_blocks *map,
 					  int flags)
@@ -484,7 +460,7 @@ static inline int z_erofs_map_blocks_iter(struct inode *inode,
 /* data.c */
 static inline struct bio *
 erofs_grab_bio(struct super_block *sb,
-	       erofs_blk_t blkaddr, unsigned int nr_pages, void *bi_private,
+	       erofs_blk_t blkaddr, unsigned int nr_pages,
 	       bio_end_io_t endio, bool nofail)
 {
 	const gfp_t gfp = GFP_NOIO;
@@ -493,7 +469,7 @@ erofs_grab_bio(struct super_block *sb,
 	do {
 		if (nr_pages == 1) {
 			bio = bio_alloc(gfp | (nofail ? __GFP_NOFAIL : 0), 1);
-			if (unlikely(!bio)) {
+			if (unlikely(bio == NULL)) {
 				DBG_BUGON(nofail);
 				return ERR_PTR(-ENOMEM);
 			}
@@ -501,12 +477,11 @@ erofs_grab_bio(struct super_block *sb,
 		}
 		bio = bio_alloc(gfp, nr_pages);
 		nr_pages /= 2;
-	} while (unlikely(!bio));
+	} while (unlikely(bio == NULL));
 
 	bio->bi_end_io = endio;
 	bio_set_dev(bio, sb->s_bdev);
 	bio->bi_iter.bi_sector = (sector_t)blkaddr << LOG_SECTORS_PER_BLOCK;
-	bio->bi_private = bi_private;
 	return bio;
 }
 
@@ -572,8 +547,6 @@ static inline bool is_inode_fast_symlink(struct inode *inode)
 }
 
 struct inode *erofs_iget(struct super_block *sb, erofs_nid_t nid, bool dir);
-int erofs_getattr(const struct path *path, struct kstat *stat,
-		  u32 request_mask, unsigned int query_flags);
 
 /* namei.c */
 extern const struct inode_operations erofs_dir_iops;
@@ -592,7 +565,7 @@ static inline void *erofs_vmap(struct page **pages, unsigned int count)
 	while (1) {
 		void *addr = vm_map_ram(pages, count, -1, PAGE_KERNEL);
 		/* retry two more times (totally 3 times) */
-		if (addr || ++i >= 3)
+		if (addr != NULL || ++i >= 3)
 			return addr;
 		vm_unmap_aliases();
 	}
@@ -615,22 +588,6 @@ static inline void erofs_vunmap(const void *mem, unsigned int count)
 extern struct shrinker erofs_shrinker_info;
 
 struct page *erofs_allocpage(struct list_head *pool, gfp_t gfp);
-
-#if (EROFS_PCPUBUF_NR_PAGES > 0)
-void *erofs_get_pcpubuf(unsigned int pagenr);
-#define erofs_put_pcpubuf(buf) do { \
-	(void)&(buf);	\
-	preempt_enable();	\
-} while (0)
-#else
-static inline void *erofs_get_pcpubuf(unsigned int pagenr)
-{
-	return ERR_PTR(-ENOTSUPP);
-}
-
-#define erofs_put_pcpubuf(buf) do {} while (0)
-#endif
-
 void erofs_register_super(struct super_block *sb);
 void erofs_unregister_super(struct super_block *sb);
 

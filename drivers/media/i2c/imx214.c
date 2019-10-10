@@ -588,10 +588,12 @@ static int imx214_set_format(struct v4l2_subdev *sd,
 
 	__crop = __imx214_get_pad_crop(imx214, cfg, format->pad, format->which);
 
-	mode = v4l2_find_nearest_size(imx214_modes,
-				      ARRAY_SIZE(imx214_modes), width, height,
-				      format->format.width,
-				      format->format.height);
+	if (format)
+		mode = v4l2_find_nearest_size(imx214_modes,
+				ARRAY_SIZE(imx214_modes), width, height,
+				format->format.width, format->format.height);
+	else
+		mode = &imx214_modes[0];
 
 	__crop->width = mode->width;
 	__crop->height = mode->height;
@@ -1111,6 +1113,6 @@ static struct i2c_driver imx214_i2c_driver = {
 
 module_i2c_driver(imx214_i2c_driver);
 
-MODULE_DESCRIPTION("Sony IMX214 Camera driver");
+MODULE_DESCRIPTION("Sony IMX214 Camera drier");
 MODULE_AUTHOR("Ricardo Ribalda <ricardo.ribalda@gmail.com>");
 MODULE_LICENSE("GPL v2");

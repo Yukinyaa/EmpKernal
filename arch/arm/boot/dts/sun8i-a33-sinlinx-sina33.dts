@@ -63,9 +63,16 @@
 
 	panel {
 		compatible = "netron-dy,e231732";
+		#address-cells = <1>;
+		#size-cells = <0>;
 
-		port {
-			panel_input: endpoint {
+		port@0 {
+			reg = <0>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			panel_input: endpoint@0 {
+				reg = <0>;
 				remote-endpoint = <&tcon0_out_panel>;
 			};
 		};

@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 comment "Processor Features"
 
 config CPU_BIG_ENDIAN

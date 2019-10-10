@@ -8,7 +8,6 @@
 #include <linux/mmc/host.h>
 
 #include "wilc_wfi_netdevice.h"
-#include "wilc_wfi_cfgoperations.h"
 
 #define SDIO_MODALIAS "wilc1000_sdio"
 
@@ -140,9 +139,11 @@ static int wilc_sdio_probe(struct sdio_func *func,
 		}
 	}
 
-	ret = wilc_cfg80211_init(&wilc, &func->dev, WILC_HIF_SDIO,
-				 &wilc_hif_sdio);
+	dev_dbg(&func->dev, "Initializing netdev\n");
+	ret = wilc_netdev_init(&wilc, &func->dev, WILC_HIF_SDIO,
+			       &wilc_hif_sdio);
 	if (ret) {
+		dev_err(&func->dev, "Couldn't initialize netdev\n");
 		kfree(sdio_priv);
 		return ret;
 	}

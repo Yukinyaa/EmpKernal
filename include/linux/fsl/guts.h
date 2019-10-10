@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /**
  * Freecale 85xx and 86xx Global Utilties register set
  *
@@ -6,6 +5,11 @@
  *          Timur Tabi <timur@freescale.com>
  *
  * Copyright 2004,2007,2012 Freescale Semiconductor, Inc
+ *
+ * This program is free software; you can redistribute  it and/or modify it
+ * under  the terms of  the GNU General  Public License as published by the
+ * Free Software Foundation;  either version 2 of the  License, or (at your
+ * option) any later version.
  */
 
 #ifndef __FSL_GUTS_H__

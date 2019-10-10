@@ -1,7 +1,10 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * linux/mdio.h: definitions for MDIO (clause 45) transceivers
  * Copyright 2006-2009 Solarflare Communications Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published
+ * by the Free Software Foundation, incorporated herein by reference.
  */
 #ifndef __LINUX_MDIO_H__
 #define __LINUX_MDIO_H__
@@ -36,8 +39,7 @@ struct mdio_device {
 	/* Bus address of the MDIO device (0-31) */
 	int addr;
 	int flags;
-	struct gpio_desc *reset_gpio;
-	struct reset_control *reset_ctrl;
+	struct gpio_desc *reset;
 	unsigned int reset_assert_delay;
 	unsigned int reset_deassert_delay;
 };

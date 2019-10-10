@@ -1,10 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * amdtp-dot.c - a part of driver for Digidesign Digi 002/003 family
  *
  * Copyright (c) 2014-2015 Takashi Sakamoto
  * Copyright (C) 2012 Robin Gareus <robin@gareus.org>
  * Copyright (C) 2012 Damien Zammit <damien@zamaudio.com>
+ *
+ * Licensed under the terms of the GNU General Public License, version 2.
  */
 
 #include <sound/pcm.h>
@@ -127,7 +128,7 @@ int amdtp_dot_set_parameters(struct amdtp_stream *s, unsigned int rate,
 	if (err < 0)
 		return err;
 
-	s->ctx_data.rx.fdf = AMDTP_FDF_AM824 | s->sfc;
+	s->fdf = AMDTP_FDF_AM824 | s->sfc;
 
 	p->pcm_channels = pcm_channels;
 

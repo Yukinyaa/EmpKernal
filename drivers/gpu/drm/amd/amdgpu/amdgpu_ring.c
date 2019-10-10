@@ -28,9 +28,8 @@
  */
 #include <linux/seq_file.h>
 #include <linux/slab.h>
-#include <linux/uaccess.h>
 #include <linux/debugfs.h>
-
+#include <drm/drmP.h>
 #include <drm/amdgpu_drm.h>
 #include "amdgpu.h"
 #include "atom.h"
@@ -249,8 +248,6 @@ int amdgpu_ring_init(struct amdgpu_device *adev, struct amdgpu_ring *ring,
 	 */
 	if (ring->funcs->type == AMDGPU_RING_TYPE_KIQ)
 		sched_hw_submission = max(sched_hw_submission, 256);
-	else if (ring == &adev->sdma.instance[0].page)
-		sched_hw_submission = 256;
 
 	if (ring->adev == NULL) {
 		if (adev->num_rings >= AMDGPU_MAX_RINGS)
@@ -281,16 +278,6 @@ int amdgpu_ring_init(struct amdgpu_device *adev, struct amdgpu_ring *ring,
 		dev_err(adev->dev, "(%d) ring fence_offs wb alloc failed\n", r);
 		return r;
 	}
-
-	r = amdgpu_device_wb_get(adev, &ring->trail_fence_offs);
-	if (r) {
-		dev_err(adev->dev,
-			"(%d) ring trail_fence_offs wb alloc failed\n", r);
-		return r;
-	}
-	ring->trail_fence_gpu_addr =
-		adev->wb.gpu_addr + (ring->trail_fence_offs * 4);
-	ring->trail_fence_cpu_addr = &adev->wb.wb[ring->trail_fence_offs];
 
 	r = amdgpu_device_wb_get(adev, &ring->cond_exe_offs);
 	if (r) {
@@ -410,7 +397,7 @@ bool amdgpu_ring_soft_recovery(struct amdgpu_ring *ring, unsigned int vmid,
 {
 	ktime_t deadline = ktime_add_us(ktime_get(), 10000);
 
-	if (amdgpu_sriov_vf(ring->adev) || !ring->funcs->soft_recovery || !fence)
+	if (!ring->funcs->soft_recovery || !fence)
 		return false;
 
 	atomic_inc(&ring->adev->gpu_reset_counter);

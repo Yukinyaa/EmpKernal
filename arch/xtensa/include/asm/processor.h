@@ -10,7 +10,7 @@
 #ifndef _XTENSA_PROCESSOR_H
 #define _XTENSA_PROCESSOR_H
 
-#include <asm/core.h>
+#include <variant/core.h>
 
 #include <linux/compiler.h>
 #include <linux/stringify.h>

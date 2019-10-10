@@ -26,6 +26,11 @@ enum dcon_gpios {
 	OLPC_DCON_BLANK,
 };
 
+struct dcon_gpio {
+	const char *name;
+	unsigned long flags;
+};
+
 static const struct dcon_gpio gpios_asis[] = {
 	[OLPC_DCON_STAT0] = { .name = "dcon_stat0", .flags = GPIOD_ASIS },
 	[OLPC_DCON_STAT1] = { .name = "dcon_stat1", .flags = GPIOD_ASIS },
@@ -34,7 +39,7 @@ static const struct dcon_gpio gpios_asis[] = {
 	[OLPC_DCON_BLANK] = { .name = "dcon_blank", .flags = GPIOD_ASIS },
 };
 
-static struct gpio_desc *gpios[5];
+struct gpio_desc *gpios[5];
 
 static int dcon_init_xo_1(struct dcon_priv *dcon)
 {

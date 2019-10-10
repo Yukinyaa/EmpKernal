@@ -107,7 +107,7 @@ qla2x00_prep_cont_type0_iocb(struct scsi_qla_host *vha)
 	cont_pkt = (cont_entry_t *)req->ring_ptr;
 
 	/* Load packet defaults. */
-	put_unaligned_le32(CONTINUE_TYPE, &cont_pkt->entry_type);
+	*((uint32_t *)(&cont_pkt->entry_type)) = cpu_to_le32(CONTINUE_TYPE);
 
 	return (cont_pkt);
 }
@@ -136,8 +136,9 @@ qla2x00_prep_cont_type1_iocb(scsi_qla_host_t *vha, struct req_que *req)
 	cont_pkt = (cont_a64_entry_t *)req->ring_ptr;
 
 	/* Load packet defaults. */
-	put_unaligned_le32(IS_QLAFX00(vha->hw) ? CONTINUE_A64_TYPE_FX00 :
-			   CONTINUE_A64_TYPE, &cont_pkt->entry_type);
+	*((uint32_t *)(&cont_pkt->entry_type)) = IS_QLAFX00(vha->hw) ?
+	    cpu_to_le32(CONTINUE_A64_TYPE_FX00) :
+	    cpu_to_le32(CONTINUE_A64_TYPE);
 
 	return (cont_pkt);
 }
@@ -192,7 +193,7 @@ void qla2x00_build_scsi_iocbs_32(srb_t *sp, cmd_entry_t *cmd_pkt,
     uint16_t tot_dsds)
 {
 	uint16_t	avail_dsds;
-	struct dsd32	*cur_dsd;
+	uint32_t	*cur_dsd;
 	scsi_qla_host_t	*vha;
 	struct scsi_cmnd *cmd;
 	struct scatterlist *sg;
@@ -201,7 +202,8 @@ void qla2x00_build_scsi_iocbs_32(srb_t *sp, cmd_entry_t *cmd_pkt,
 	cmd = GET_CMD_SP(sp);
 
 	/* Update entry type to indicate Command Type 2 IOCB */
-	put_unaligned_le32(COMMAND_TYPE, &cmd_pkt->entry_type);
+	*((uint32_t *)(&cmd_pkt->entry_type)) =
+	    cpu_to_le32(COMMAND_TYPE);
 
 	/* No data transfer */
 	if (!scsi_bufflen(cmd) || cmd->sc_data_direction == DMA_NONE) {
@@ -213,8 +215,8 @@ void qla2x00_build_scsi_iocbs_32(srb_t *sp, cmd_entry_t *cmd_pkt,
 	cmd_pkt->control_flags |= cpu_to_le16(qla2x00_get_cmd_direction(sp));
 
 	/* Three DSDs are available in the Command Type 2 IOCB */
-	avail_dsds = ARRAY_SIZE(cmd_pkt->dsd32);
-	cur_dsd = cmd_pkt->dsd32;
+	avail_dsds = 3;
+	cur_dsd = (uint32_t *)&cmd_pkt->dseg_0_address;
 
 	/* Load data segments */
 	scsi_for_each_sg(cmd, sg, tot_dsds, i) {
@@ -227,11 +229,12 @@ void qla2x00_build_scsi_iocbs_32(srb_t *sp, cmd_entry_t *cmd_pkt,
 			 * Type 0 IOCB.
 			 */
 			cont_pkt = qla2x00_prep_cont_type0_iocb(vha);
-			cur_dsd = cont_pkt->dsd;
-			avail_dsds = ARRAY_SIZE(cont_pkt->dsd);
+			cur_dsd = (uint32_t *)&cont_pkt->dseg_0_address;
+			avail_dsds = 7;
 		}
 
-		append_dsd32(&cur_dsd, sg);
+		*cur_dsd++ = cpu_to_le32(sg_dma_address(sg));
+		*cur_dsd++ = cpu_to_le32(sg_dma_len(sg));
 		avail_dsds--;
 	}
 }
@@ -248,7 +251,7 @@ void qla2x00_build_scsi_iocbs_64(srb_t *sp, cmd_entry_t *cmd_pkt,
     uint16_t tot_dsds)
 {
 	uint16_t	avail_dsds;
-	struct dsd64	*cur_dsd;
+	uint32_t	*cur_dsd;
 	scsi_qla_host_t	*vha;
 	struct scsi_cmnd *cmd;
 	struct scatterlist *sg;
@@ -257,7 +260,7 @@ void qla2x00_build_scsi_iocbs_64(srb_t *sp, cmd_entry_t *cmd_pkt,
 	cmd = GET_CMD_SP(sp);
 
 	/* Update entry type to indicate Command Type 3 IOCB */
-	put_unaligned_le32(COMMAND_A64_TYPE, &cmd_pkt->entry_type);
+	*((uint32_t *)(&cmd_pkt->entry_type)) = cpu_to_le32(COMMAND_A64_TYPE);
 
 	/* No data transfer */
 	if (!scsi_bufflen(cmd) || cmd->sc_data_direction == DMA_NONE) {
@@ -269,11 +272,12 @@ void qla2x00_build_scsi_iocbs_64(srb_t *sp, cmd_entry_t *cmd_pkt,
 	cmd_pkt->control_flags |= cpu_to_le16(qla2x00_get_cmd_direction(sp));
 
 	/* Two DSDs are available in the Command Type 3 IOCB */
-	avail_dsds = ARRAY_SIZE(cmd_pkt->dsd64);
-	cur_dsd = cmd_pkt->dsd64;
+	avail_dsds = 2;
+	cur_dsd = (uint32_t *)&cmd_pkt->dseg_0_address;
 
 	/* Load data segments */
 	scsi_for_each_sg(cmd, sg, tot_dsds, i) {
+		dma_addr_t	sle_dma;
 		cont_a64_entry_t *cont_pkt;
 
 		/* Allocate additional continuation packets? */
@@ -283,11 +287,14 @@ void qla2x00_build_scsi_iocbs_64(srb_t *sp, cmd_entry_t *cmd_pkt,
 			 * Type 1 IOCB.
 			 */
 			cont_pkt = qla2x00_prep_cont_type1_iocb(vha, vha->req);
-			cur_dsd = cont_pkt->dsd;
-			avail_dsds = ARRAY_SIZE(cont_pkt->dsd);
+			cur_dsd = (uint32_t *)cont_pkt->dseg_0_address;
+			avail_dsds = 5;
 		}
 
-		append_dsd64(&cur_dsd, sg);
+		sle_dma = sg_dma_address(sg);
+		*cur_dsd++ = cpu_to_le32(LSD(sle_dma));
+		*cur_dsd++ = cpu_to_le32(MSD(sle_dma));
+		*cur_dsd++ = cpu_to_le32(sg_dma_len(sg));
 		avail_dsds--;
 	}
 }
@@ -460,7 +467,7 @@ qla2x00_start_iocbs(struct scsi_qla_host *vha, struct req_que *req)
 			req->ring_ptr++;
 
 		/* Set chip new ring index. */
-		if (ha->mqenable || IS_QLA27XX(ha) || IS_QLA28XX(ha)) {
+		if (ha->mqenable || IS_QLA27XX(ha)) {
 			WRT_REG_DWORD(req->req_q_in, req->ring_index);
 		} else if (IS_QLA83XX(ha)) {
 			WRT_REG_DWORD(req->req_q_in, req->ring_index);
@@ -573,11 +580,13 @@ static inline int
 qla24xx_build_scsi_type_6_iocbs(srb_t *sp, struct cmd_type_6 *cmd_pkt,
 	uint16_t tot_dsds)
 {
-	struct dsd64 *cur_dsd = NULL, *next_dsd;
+	uint32_t *cur_dsd = NULL;
 	scsi_qla_host_t	*vha;
 	struct qla_hw_data *ha;
 	struct scsi_cmnd *cmd;
 	struct	scatterlist *cur_seg;
+	uint32_t *dsd_seg;
+	void *next_dsd;
 	uint8_t avail_dsds;
 	uint8_t first_iocb = 1;
 	uint32_t dsd_list_len;
@@ -587,7 +596,7 @@ qla24xx_build_scsi_type_6_iocbs(srb_t *sp, struct cmd_type_6 *cmd_pkt,
 	cmd = GET_CMD_SP(sp);
 
 	/* Update entry type to indicate Command Type 3 IOCB */
-	put_unaligned_le32(COMMAND_TYPE_6, &cmd_pkt->entry_type);
+	*((uint32_t *)(&cmd_pkt->entry_type)) = cpu_to_le32(COMMAND_TYPE_6);
 
 	/* No data transfer */
 	if (!scsi_bufflen(cmd) || cmd->sc_data_direction == DMA_NONE) {
@@ -629,27 +638,32 @@ qla24xx_build_scsi_type_6_iocbs(srb_t *sp, struct cmd_type_6 *cmd_pkt,
 
 		if (first_iocb) {
 			first_iocb = 0;
-			put_unaligned_le64(dsd_ptr->dsd_list_dma,
-					   &cmd_pkt->fcp_dsd.address);
-			cmd_pkt->fcp_dsd.length = cpu_to_le32(dsd_list_len);
+			dsd_seg = (uint32_t *)&cmd_pkt->fcp_data_dseg_address;
+			*dsd_seg++ = cpu_to_le32(LSD(dsd_ptr->dsd_list_dma));
+			*dsd_seg++ = cpu_to_le32(MSD(dsd_ptr->dsd_list_dma));
+			cmd_pkt->fcp_data_dseg_len = cpu_to_le32(dsd_list_len);
 		} else {
-			put_unaligned_le64(dsd_ptr->dsd_list_dma,
-					   &cur_dsd->address);
-			cur_dsd->length = cpu_to_le32(dsd_list_len);
-			cur_dsd++;
+			*cur_dsd++ = cpu_to_le32(LSD(dsd_ptr->dsd_list_dma));
+			*cur_dsd++ = cpu_to_le32(MSD(dsd_ptr->dsd_list_dma));
+			*cur_dsd++ = cpu_to_le32(dsd_list_len);
 		}
-		cur_dsd = next_dsd;
+		cur_dsd = (uint32_t *)next_dsd;
 		while (avail_dsds) {
-			append_dsd64(&cur_dsd, cur_seg);
+			dma_addr_t	sle_dma;
+
+			sle_dma = sg_dma_address(cur_seg);
+			*cur_dsd++ = cpu_to_le32(LSD(sle_dma));
+			*cur_dsd++ = cpu_to_le32(MSD(sle_dma));
+			*cur_dsd++ = cpu_to_le32(sg_dma_len(cur_seg));
 			cur_seg = sg_next(cur_seg);
 			avail_dsds--;
 		}
 	}
 
 	/* Null termination */
-	cur_dsd->address = 0;
-	cur_dsd->length = 0;
-	cur_dsd++;
+	*cur_dsd++ =  0;
+	*cur_dsd++ = 0;
+	*cur_dsd++ = 0;
 	cmd_pkt->control_flags |= CF_DATA_SEG_DESCR_ENABLE;
 	return 0;
 }
@@ -688,7 +702,7 @@ qla24xx_build_scsi_iocbs(srb_t *sp, struct cmd_type_7 *cmd_pkt,
 	uint16_t tot_dsds, struct req_que *req)
 {
 	uint16_t	avail_dsds;
-	struct dsd64	*cur_dsd;
+	uint32_t	*cur_dsd;
 	scsi_qla_host_t	*vha;
 	struct scsi_cmnd *cmd;
 	struct scatterlist *sg;
@@ -697,7 +711,7 @@ qla24xx_build_scsi_iocbs(srb_t *sp, struct cmd_type_7 *cmd_pkt,
 	cmd = GET_CMD_SP(sp);
 
 	/* Update entry type to indicate Command Type 3 IOCB */
-	put_unaligned_le32(COMMAND_TYPE_7, &cmd_pkt->entry_type);
+	*((uint32_t *)(&cmd_pkt->entry_type)) = cpu_to_le32(COMMAND_TYPE_7);
 
 	/* No data transfer */
 	if (!scsi_bufflen(cmd) || cmd->sc_data_direction == DMA_NONE) {
@@ -720,11 +734,12 @@ qla24xx_build_scsi_iocbs(srb_t *sp, struct cmd_type_7 *cmd_pkt,
 
 	/* One DSD is available in the Command Type 3 IOCB */
 	avail_dsds = 1;
-	cur_dsd = &cmd_pkt->dsd;
+	cur_dsd = (uint32_t *)&cmd_pkt->dseg_0_address;
 
 	/* Load data segments */
 
 	scsi_for_each_sg(cmd, sg, tot_dsds, i) {
+		dma_addr_t	sle_dma;
 		cont_a64_entry_t *cont_pkt;
 
 		/* Allocate additional continuation packets? */
@@ -734,11 +749,14 @@ qla24xx_build_scsi_iocbs(srb_t *sp, struct cmd_type_7 *cmd_pkt,
 			 * Type 1 IOCB.
 			 */
 			cont_pkt = qla2x00_prep_cont_type1_iocb(vha, req);
-			cur_dsd = cont_pkt->dsd;
-			avail_dsds = ARRAY_SIZE(cont_pkt->dsd);
+			cur_dsd = (uint32_t *)cont_pkt->dseg_0_address;
+			avail_dsds = 5;
 		}
 
-		append_dsd64(&cur_dsd, sg);
+		sle_dma = sg_dma_address(sg);
+		*cur_dsd++ = cpu_to_le32(LSD(sle_dma));
+		*cur_dsd++ = cpu_to_le32(MSD(sle_dma));
+		*cur_dsd++ = cpu_to_le32(sg_dma_len(sg));
 		avail_dsds--;
 	}
 }
@@ -874,14 +892,14 @@ qla24xx_get_one_block_sg(uint32_t blk_sz, struct qla2_sgx *sgx,
 
 int
 qla24xx_walk_and_build_sglist_no_difb(struct qla_hw_data *ha, srb_t *sp,
-	struct dsd64 *dsd, uint16_t tot_dsds, struct qla_tc_param *tc)
+	uint32_t *dsd, uint16_t tot_dsds, struct qla_tc_param *tc)
 {
 	void *next_dsd;
 	uint8_t avail_dsds = 0;
 	uint32_t dsd_list_len;
 	struct dsd_dma *dsd_ptr;
 	struct scatterlist *sg_prot;
-	struct dsd64 *cur_dsd = dsd;
+	uint32_t *cur_dsd = dsd;
 	uint16_t	used_dsds = tot_dsds;
 	uint32_t	prot_int; /* protection interval */
 	uint32_t	partial;
@@ -955,14 +973,14 @@ alloc_and_fill:
 
 
 			/* add new list to cmd iocb or last list */
-			put_unaligned_le64(dsd_ptr->dsd_list_dma,
-					   &cur_dsd->address);
-			cur_dsd->length = cpu_to_le32(dsd_list_len);
-			cur_dsd = next_dsd;
+			*cur_dsd++ = cpu_to_le32(LSD(dsd_ptr->dsd_list_dma));
+			*cur_dsd++ = cpu_to_le32(MSD(dsd_ptr->dsd_list_dma));
+			*cur_dsd++ = dsd_list_len;
+			cur_dsd = (uint32_t *)next_dsd;
 		}
-		put_unaligned_le64(sle_dma, &cur_dsd->address);
-		cur_dsd->length = cpu_to_le32(sle_dma_len);
-		cur_dsd++;
+		*cur_dsd++ = cpu_to_le32(LSD(sle_dma));
+		*cur_dsd++ = cpu_to_le32(MSD(sle_dma));
+		*cur_dsd++ = cpu_to_le32(sle_dma_len);
 		avail_dsds--;
 
 		if (partial == 0) {
@@ -981,22 +999,22 @@ alloc_and_fill:
 		}
 	}
 	/* Null termination */
-	cur_dsd->address = 0;
-	cur_dsd->length = 0;
-	cur_dsd++;
+	*cur_dsd++ = 0;
+	*cur_dsd++ = 0;
+	*cur_dsd++ = 0;
 	return 0;
 }
 
 int
-qla24xx_walk_and_build_sglist(struct qla_hw_data *ha, srb_t *sp,
-	struct dsd64 *dsd, uint16_t tot_dsds, struct qla_tc_param *tc)
+qla24xx_walk_and_build_sglist(struct qla_hw_data *ha, srb_t *sp, uint32_t *dsd,
+	uint16_t tot_dsds, struct qla_tc_param *tc)
 {
 	void *next_dsd;
 	uint8_t avail_dsds = 0;
 	uint32_t dsd_list_len;
 	struct dsd_dma *dsd_ptr;
 	struct scatterlist *sg, *sgl;
-	struct dsd64 *cur_dsd = dsd;
+	uint32_t *cur_dsd = dsd;
 	int	i;
 	uint16_t	used_dsds = tot_dsds;
 	struct scsi_cmnd *cmd;
@@ -1013,6 +1031,8 @@ qla24xx_walk_and_build_sglist(struct qla_hw_data *ha, srb_t *sp,
 
 
 	for_each_sg(sgl, sg, tot_dsds, i) {
+		dma_addr_t	sle_dma;
+
 		/* Allocate additional continuation packets? */
 		if (avail_dsds == 0) {
 			avail_dsds = (used_dsds > QLA_DSDS_PER_IOCB) ?
@@ -1052,25 +1072,29 @@ qla24xx_walk_and_build_sglist(struct qla_hw_data *ha, srb_t *sp,
 			}
 
 			/* add new list to cmd iocb or last list */
-			put_unaligned_le64(dsd_ptr->dsd_list_dma,
-					   &cur_dsd->address);
-			cur_dsd->length = cpu_to_le32(dsd_list_len);
-			cur_dsd = next_dsd;
+			*cur_dsd++ = cpu_to_le32(LSD(dsd_ptr->dsd_list_dma));
+			*cur_dsd++ = cpu_to_le32(MSD(dsd_ptr->dsd_list_dma));
+			*cur_dsd++ = dsd_list_len;
+			cur_dsd = (uint32_t *)next_dsd;
 		}
-		append_dsd64(&cur_dsd, sg);
+		sle_dma = sg_dma_address(sg);
+
+		*cur_dsd++ = cpu_to_le32(LSD(sle_dma));
+		*cur_dsd++ = cpu_to_le32(MSD(sle_dma));
+		*cur_dsd++ = cpu_to_le32(sg_dma_len(sg));
 		avail_dsds--;
 
 	}
 	/* Null termination */
-	cur_dsd->address = 0;
-	cur_dsd->length = 0;
-	cur_dsd++;
+	*cur_dsd++ = 0;
+	*cur_dsd++ = 0;
+	*cur_dsd++ = 0;
 	return 0;
 }
 
 int
 qla24xx_walk_and_build_prot_sglist(struct qla_hw_data *ha, srb_t *sp,
-	struct dsd64 *cur_dsd, uint16_t tot_dsds, struct qla_tgt_cmd *tc)
+    uint32_t *cur_dsd, uint16_t tot_dsds, struct qla_tgt_cmd *tc)
 {
 	struct dsd_dma *dsd_ptr = NULL, *dif_dsd, *nxt_dsd;
 	struct scatterlist *sg, *sgl;
@@ -1085,7 +1109,6 @@ qla24xx_walk_and_build_prot_sglist(struct qla_hw_data *ha, srb_t *sp,
 
 	if (sp) {
 		struct scsi_cmnd *cmd = GET_CMD_SP(sp);
-
 		sgl = scsi_prot_sglist(cmd);
 		vha = sp->vha;
 		difctx = sp->u.scmd.ctx;
@@ -1291,15 +1314,16 @@ qla24xx_walk_and_build_prot_sglist(struct qla_hw_data *ha, srb_t *sp,
 				}
 
 				/* add new list to cmd iocb or last list */
-				put_unaligned_le64(dsd_ptr->dsd_list_dma,
-						   &cur_dsd->address);
-				cur_dsd->length = cpu_to_le32(dsd_list_len);
+				*cur_dsd++ =
+				    cpu_to_le32(LSD(dsd_ptr->dsd_list_dma));
+				*cur_dsd++ =
+				    cpu_to_le32(MSD(dsd_ptr->dsd_list_dma));
+				*cur_dsd++ = dsd_list_len;
 				cur_dsd = dsd_ptr->dsd_addr;
 			}
-			put_unaligned_le64(dif_dsd->dsd_list_dma,
-					   &cur_dsd->address);
-			cur_dsd->length = cpu_to_le32(sglen);
-			cur_dsd++;
+			*cur_dsd++ = cpu_to_le32(LSD(dif_dsd->dsd_list_dma));
+			*cur_dsd++ = cpu_to_le32(MSD(dif_dsd->dsd_list_dma));
+			*cur_dsd++ = cpu_to_le32(sglen);
 			avail_dsds--;
 			difctx->dif_bundl_len -= sglen;
 			track_difbundl_buf--;
@@ -1310,6 +1334,8 @@ qla24xx_walk_and_build_prot_sglist(struct qla_hw_data *ha, srb_t *sp,
 			difctx->no_ldif_dsd, difctx->no_dif_bundl);
 	} else {
 		for_each_sg(sgl, sg, tot_dsds, i) {
+			dma_addr_t sle_dma;
+
 			/* Allocate additional continuation packets? */
 			if (avail_dsds == 0) {
 				avail_dsds = (used_dsds > QLA_DSDS_PER_IOCB) ?
@@ -1349,19 +1375,24 @@ qla24xx_walk_and_build_prot_sglist(struct qla_hw_data *ha, srb_t *sp,
 				}
 
 				/* add new list to cmd iocb or last list */
-				put_unaligned_le64(dsd_ptr->dsd_list_dma,
-						   &cur_dsd->address);
-				cur_dsd->length = cpu_to_le32(dsd_list_len);
+				*cur_dsd++ =
+				    cpu_to_le32(LSD(dsd_ptr->dsd_list_dma));
+				*cur_dsd++ =
+				    cpu_to_le32(MSD(dsd_ptr->dsd_list_dma));
+				*cur_dsd++ = dsd_list_len;
 				cur_dsd = dsd_ptr->dsd_addr;
 			}
-			append_dsd64(&cur_dsd, sg);
+			sle_dma = sg_dma_address(sg);
+			*cur_dsd++ = cpu_to_le32(LSD(sle_dma));
+			*cur_dsd++ = cpu_to_le32(MSD(sle_dma));
+			*cur_dsd++ = cpu_to_le32(sg_dma_len(sg));
 			avail_dsds--;
 		}
 	}
 	/* Null termination */
-	cur_dsd->address = 0;
-	cur_dsd->length = 0;
-	cur_dsd++;
+	*cur_dsd++ = 0;
+	*cur_dsd++ = 0;
+	*cur_dsd++ = 0;
 	return 0;
 }
 /**
@@ -1374,12 +1405,11 @@ qla24xx_walk_and_build_prot_sglist(struct qla_hw_data *ha, srb_t *sp,
  * @tot_prot_dsds: Total number of segments with protection information
  * @fw_prot_opts: Protection options to be passed to firmware
  */
-static inline int
+inline int
 qla24xx_build_scsi_crc_2_iocbs(srb_t *sp, struct cmd_type_crc_2 *cmd_pkt,
     uint16_t tot_dsds, uint16_t tot_prot_dsds, uint16_t fw_prot_opts)
 {
-	struct dsd64		*cur_dsd;
-	uint32_t		*fcp_dl;
+	uint32_t		*cur_dsd, *fcp_dl;
 	scsi_qla_host_t		*vha;
 	struct scsi_cmnd	*cmd;
 	uint32_t		total_bytes = 0;
@@ -1397,7 +1427,7 @@ qla24xx_build_scsi_crc_2_iocbs(srb_t *sp, struct cmd_type_crc_2 *cmd_pkt,
 	cmd = GET_CMD_SP(sp);
 
 	/* Update entry type to indicate Command Type CRC_2 IOCB */
-	put_unaligned_le32(COMMAND_TYPE_CRC_2, &cmd_pkt->entry_type);
+	*((uint32_t *)(&cmd_pkt->entry_type)) = cpu_to_le32(COMMAND_TYPE_CRC_2);
 
 	vha = sp->vha;
 	ha = vha->hw;
@@ -1445,7 +1475,8 @@ qla24xx_build_scsi_crc_2_iocbs(srb_t *sp, struct cmd_type_crc_2 *cmd_pkt,
 	qla24xx_set_t10dif_tags(sp, (struct fw_dif_context *)
 	    &crc_ctx_pkt->ref_tag, tot_prot_dsds);
 
-	put_unaligned_le64(crc_ctx_dma, &cmd_pkt->crc_context_address);
+	cmd_pkt->crc_context_address[0] = cpu_to_le32(LSD(crc_ctx_dma));
+	cmd_pkt->crc_context_address[1] = cpu_to_le32(MSD(crc_ctx_dma));
 	cmd_pkt->crc_context_len = CRC_CONTEXT_LEN_FW;
 
 	/* Determine SCSI command length -- align to 4 byte boundary */
@@ -1472,8 +1503,10 @@ qla24xx_build_scsi_crc_2_iocbs(srb_t *sp, struct cmd_type_crc_2 *cmd_pkt,
 	int_to_scsilun(cmd->device->lun, &fcp_cmnd->lun);
 	memcpy(fcp_cmnd->cdb, cmd->cmnd, cmd->cmd_len);
 	cmd_pkt->fcp_cmnd_dseg_len = cpu_to_le16(fcp_cmnd_len);
-	put_unaligned_le64(crc_ctx_dma + CRC_CONTEXT_FCPCMND_OFF,
-			   &cmd_pkt->fcp_cmnd_dseg_address);
+	cmd_pkt->fcp_cmnd_dseg_address[0] = cpu_to_le32(
+	    LSD(crc_ctx_dma + CRC_CONTEXT_FCPCMND_OFF));
+	cmd_pkt->fcp_cmnd_dseg_address[1] = cpu_to_le32(
+	    MSD(crc_ctx_dma + CRC_CONTEXT_FCPCMND_OFF));
 	fcp_cmnd->task_management = 0;
 	fcp_cmnd->task_attribute = TSK_SIMPLE;
 
@@ -1487,18 +1520,18 @@ qla24xx_build_scsi_crc_2_iocbs(srb_t *sp, struct cmd_type_crc_2 *cmd_pkt,
 	switch (scsi_get_prot_op(GET_CMD_SP(sp))) {
 	case SCSI_PROT_READ_INSERT:
 	case SCSI_PROT_WRITE_STRIP:
-		total_bytes = data_bytes;
-		data_bytes += dif_bytes;
-		break;
+	    total_bytes = data_bytes;
+	    data_bytes += dif_bytes;
+	    break;
 
 	case SCSI_PROT_READ_STRIP:
 	case SCSI_PROT_WRITE_INSERT:
 	case SCSI_PROT_READ_PASS:
 	case SCSI_PROT_WRITE_PASS:
-		total_bytes = data_bytes + dif_bytes;
-		break;
+	    total_bytes = data_bytes + dif_bytes;
+	    break;
 	default:
-		BUG();
+	    BUG();
 	}
 
 	if (!qla2x00_hba_err_chk_enabled(sp))
@@ -1515,7 +1548,7 @@ qla24xx_build_scsi_crc_2_iocbs(srb_t *sp, struct cmd_type_crc_2 *cmd_pkt,
 	}
 
 	if (!bundling) {
-		cur_dsd = &crc_ctx_pkt->u.nobundling.data_dsd;
+		cur_dsd = (uint32_t *) &crc_ctx_pkt->u.nobundling.data_address;
 	} else {
 		/*
 		 * Configure Bundling if we need to fetch interlaving
@@ -1525,7 +1558,7 @@ qla24xx_build_scsi_crc_2_iocbs(srb_t *sp, struct cmd_type_crc_2 *cmd_pkt,
 		crc_ctx_pkt->u.bundling.dif_byte_count = cpu_to_le32(dif_bytes);
 		crc_ctx_pkt->u.bundling.dseg_count = cpu_to_le16(tot_dsds -
 							tot_prot_dsds);
-		cur_dsd = &crc_ctx_pkt->u.bundling.data_dsd;
+		cur_dsd = (uint32_t *) &crc_ctx_pkt->u.bundling.data_address;
 	}
 
 	/* Finish the common fields of CRC pkt */
@@ -1558,7 +1591,7 @@ qla24xx_build_scsi_crc_2_iocbs(srb_t *sp, struct cmd_type_crc_2 *cmd_pkt,
 	if (bundling && tot_prot_dsds) {
 		/* Walks dif segments */
 		cmd_pkt->control_flags |= cpu_to_le16(CF_DIF_SEG_DESCR_ENABLE);
-		cur_dsd = &crc_ctx_pkt->u.bundling.dif_dsd;
+		cur_dsd = (uint32_t *) &crc_ctx_pkt->u.bundling.dif_address;
 		if (qla24xx_walk_and_build_prot_sglist(ha, sp, cur_dsd,
 				tot_prot_dsds, NULL))
 			goto crc_queuing_error;
@@ -2292,8 +2325,7 @@ __qla2x00_alloc_iocbs(struct qla_qpair *qpair, srb_t *sp)
 	if (req->cnt < req_cnt + 2) {
 		if (qpair->use_shadow_reg)
 			cnt = *req->out_ptr;
-		else if (ha->mqenable || IS_QLA83XX(ha) || IS_QLA27XX(ha) ||
-		    IS_QLA28XX(ha))
+		else if (ha->mqenable || IS_QLA83XX(ha) || IS_QLA27XX(ha))
 			cnt = RD_REG_DWORD(&reg->isp25mq.req_q_out);
 		else if (IS_P3P_TYPE(ha))
 			cnt = RD_REG_DWORD(&reg->isp82.req_q_out);
@@ -2462,7 +2494,7 @@ qla2x00_logout_iocb(srb_t *sp, struct mbx_entry *mbx)
 	SET_TARGET_ID(ha, mbx->loop_id, sp->fcport->loop_id);
 	mbx->mb0 = cpu_to_le16(MBC_LOGOUT_FABRIC_PORT);
 	mbx->mb1 = HAS_EXTENDED_IDS(ha) ?
-	    cpu_to_le16(sp->fcport->loop_id) :
+	    cpu_to_le16(sp->fcport->loop_id):
 	    cpu_to_le16(sp->fcport->loop_id << 8);
 	mbx->mb2 = cpu_to_le16(sp->fcport->d_id.b.domain);
 	mbx->mb3 = cpu_to_le16(sp->fcport->d_id.b.area << 8 |
@@ -2531,16 +2563,6 @@ qla24xx_tm_iocb(srb_t *sp, struct tsk_mgmt_entry *tsk)
 		host_to_fcp_swap((uint8_t *)&tsk->lun,
 			sizeof(tsk->lun));
 	}
-}
-
-void qla2x00_init_timer(srb_t *sp, unsigned long tmo)
-{
-	timer_setup(&sp->u.iocb_cmd.timer, qla2x00_sp_timeout, 0);
-	sp->u.iocb_cmd.timer.expires = jiffies + tmo * HZ;
-	sp->free = qla2x00_sp_free;
-	if (IS_QLAFX00(sp->vha->hw) && sp->type == SRB_FXIOCB_DCMD)
-		init_completion(&sp->u.iocb_cmd.u.fxiocb.fxiocb_comp);
-	add_timer(&sp->u.iocb_cmd.timer);
 }
 
 static void
@@ -2704,13 +2726,18 @@ qla24xx_els_logo_iocb(srb_t *sp, struct els_entry_24xx *els_iocb)
 	if (elsio->u.els_logo.els_cmd == ELS_DCMD_PLOGI) {
 		els_iocb->tx_byte_count = els_iocb->tx_len =
 			sizeof(struct els_plogi_payload);
-		put_unaligned_le64(elsio->u.els_plogi.els_plogi_pyld_dma,
-				   &els_iocb->tx_address);
+		els_iocb->tx_address[0] =
+			cpu_to_le32(LSD(elsio->u.els_plogi.els_plogi_pyld_dma));
+		els_iocb->tx_address[1] =
+			cpu_to_le32(MSD(elsio->u.els_plogi.els_plogi_pyld_dma));
+
 		els_iocb->rx_dsd_count = 1;
 		els_iocb->rx_byte_count = els_iocb->rx_len =
 			sizeof(struct els_plogi_payload);
-		put_unaligned_le64(elsio->u.els_plogi.els_resp_pyld_dma,
-				   &els_iocb->rx_address);
+		els_iocb->rx_address[0] =
+			cpu_to_le32(LSD(elsio->u.els_plogi.els_resp_pyld_dma));
+		els_iocb->rx_address[1] =
+			cpu_to_le32(MSD(elsio->u.els_plogi.els_resp_pyld_dma));
 
 		ql_dbg(ql_dbg_io + ql_dbg_buffer, vha, 0x3073,
 		    "PLOGI ELS IOCB:\n");
@@ -2718,12 +2745,15 @@ qla24xx_els_logo_iocb(srb_t *sp, struct els_entry_24xx *els_iocb)
 		    (uint8_t *)els_iocb, 0x70);
 	} else {
 		els_iocb->tx_byte_count = sizeof(struct els_logo_payload);
-		put_unaligned_le64(elsio->u.els_logo.els_logo_pyld_dma,
-				   &els_iocb->tx_address);
+		els_iocb->tx_address[0] =
+		    cpu_to_le32(LSD(elsio->u.els_logo.els_logo_pyld_dma));
+		els_iocb->tx_address[1] =
+		    cpu_to_le32(MSD(elsio->u.els_logo.els_logo_pyld_dma));
 		els_iocb->tx_len = cpu_to_le32(sizeof(struct els_logo_payload));
 
 		els_iocb->rx_byte_count = 0;
-		els_iocb->rx_address = 0;
+		els_iocb->rx_address[0] = 0;
+		els_iocb->rx_address[1] = 0;
 		els_iocb->rx_len = 0;
 	}
 
@@ -2946,13 +2976,17 @@ qla24xx_els_iocb(srb_t *sp, struct els_entry_24xx *els_iocb)
         els_iocb->tx_byte_count =
             cpu_to_le32(bsg_job->request_payload.payload_len);
 
-	put_unaligned_le64(sg_dma_address(bsg_job->request_payload.sg_list),
-			   &els_iocb->tx_address);
+        els_iocb->tx_address[0] = cpu_to_le32(LSD(sg_dma_address
+            (bsg_job->request_payload.sg_list)));
+        els_iocb->tx_address[1] = cpu_to_le32(MSD(sg_dma_address
+            (bsg_job->request_payload.sg_list)));
         els_iocb->tx_len = cpu_to_le32(sg_dma_len
             (bsg_job->request_payload.sg_list));
 
-	put_unaligned_le64(sg_dma_address(bsg_job->reply_payload.sg_list),
-			   &els_iocb->rx_address);
+        els_iocb->rx_address[0] = cpu_to_le32(LSD(sg_dma_address
+            (bsg_job->reply_payload.sg_list)));
+        els_iocb->rx_address[1] = cpu_to_le32(MSD(sg_dma_address
+            (bsg_job->reply_payload.sg_list)));
         els_iocb->rx_len = cpu_to_le32(sg_dma_len
             (bsg_job->reply_payload.sg_list));
 
@@ -2963,13 +2997,14 @@ static void
 qla2x00_ct_iocb(srb_t *sp, ms_iocb_entry_t *ct_iocb)
 {
 	uint16_t        avail_dsds;
-	struct dsd64	*cur_dsd;
+	uint32_t        *cur_dsd;
 	struct scatterlist *sg;
 	int index;
 	uint16_t tot_dsds;
 	scsi_qla_host_t *vha = sp->vha;
 	struct qla_hw_data *ha = vha->hw;
 	struct bsg_job *bsg_job = sp->u.bsg_job;
+	int loop_iterartion = 0;
 	int entry_count = 1;
 
 	memset(ct_iocb, 0, sizeof(ms_iocb_entry_t));
@@ -2989,20 +3024,25 @@ qla2x00_ct_iocb(srb_t *sp, ms_iocb_entry_t *ct_iocb)
 	ct_iocb->rsp_bytecount =
 	    cpu_to_le32(bsg_job->reply_payload.payload_len);
 
-	put_unaligned_le64(sg_dma_address(bsg_job->request_payload.sg_list),
-			   &ct_iocb->req_dsd.address);
-	ct_iocb->req_dsd.length = ct_iocb->req_bytecount;
+	ct_iocb->dseg_req_address[0] = cpu_to_le32(LSD(sg_dma_address
+	    (bsg_job->request_payload.sg_list)));
+	ct_iocb->dseg_req_address[1] = cpu_to_le32(MSD(sg_dma_address
+	    (bsg_job->request_payload.sg_list)));
+	ct_iocb->dseg_req_length = ct_iocb->req_bytecount;
 
-	put_unaligned_le64(sg_dma_address(bsg_job->reply_payload.sg_list),
-			   &ct_iocb->rsp_dsd.address);
-	ct_iocb->rsp_dsd.length = ct_iocb->rsp_bytecount;
+	ct_iocb->dseg_rsp_address[0] = cpu_to_le32(LSD(sg_dma_address
+	    (bsg_job->reply_payload.sg_list)));
+	ct_iocb->dseg_rsp_address[1] = cpu_to_le32(MSD(sg_dma_address
+	    (bsg_job->reply_payload.sg_list)));
+	ct_iocb->dseg_rsp_length = ct_iocb->rsp_bytecount;
 
 	avail_dsds = 1;
-	cur_dsd = &ct_iocb->rsp_dsd;
+	cur_dsd = (uint32_t *)ct_iocb->dseg_rsp_address;
 	index = 0;
 	tot_dsds = bsg_job->reply_payload.sg_cnt;
 
 	for_each_sg(bsg_job->reply_payload.sg_list, sg, tot_dsds, index) {
+		dma_addr_t       sle_dma;
 		cont_a64_entry_t *cont_pkt;
 
 		/* Allocate additional continuation packets? */
@@ -3013,12 +3053,16 @@ qla2x00_ct_iocb(srb_t *sp, ms_iocb_entry_t *ct_iocb)
 			       */
 			cont_pkt = qla2x00_prep_cont_type1_iocb(vha,
 			    vha->hw->req_q_map[0]);
-			cur_dsd = cont_pkt->dsd;
+			cur_dsd = (uint32_t *) cont_pkt->dseg_0_address;
 			avail_dsds = 5;
 			entry_count++;
 		}
 
-		append_dsd64(&cur_dsd, sg);
+		sle_dma = sg_dma_address(sg);
+		*cur_dsd++   = cpu_to_le32(LSD(sle_dma));
+		*cur_dsd++   = cpu_to_le32(MSD(sle_dma));
+		*cur_dsd++   = cpu_to_le32(sg_dma_len(sg));
+		loop_iterartion++;
 		avail_dsds--;
 	}
 	ct_iocb->entry_count = entry_count;
@@ -3030,7 +3074,7 @@ static void
 qla24xx_ct_iocb(srb_t *sp, struct ct_entry_24xx *ct_iocb)
 {
 	uint16_t        avail_dsds;
-	struct dsd64	*cur_dsd;
+	uint32_t        *cur_dsd;
 	struct scatterlist *sg;
 	int index;
 	uint16_t cmd_dsds, rsp_dsds;
@@ -3059,10 +3103,12 @@ qla24xx_ct_iocb(srb_t *sp, struct ct_entry_24xx *ct_iocb)
             cpu_to_le32(bsg_job->request_payload.payload_len);
 
 	avail_dsds = 2;
-	cur_dsd = ct_iocb->dsd;
+	cur_dsd = (uint32_t *)ct_iocb->dseg_0_address;
 	index = 0;
 
 	for_each_sg(bsg_job->request_payload.sg_list, sg, cmd_dsds, index) {
+		dma_addr_t       sle_dma;
+
 		/* Allocate additional continuation packets? */
 		if (avail_dsds == 0) {
 			/*
@@ -3071,18 +3117,23 @@ qla24xx_ct_iocb(srb_t *sp, struct ct_entry_24xx *ct_iocb)
 			 */
 			cont_pkt = qla2x00_prep_cont_type1_iocb(
 			    vha, ha->req_q_map[0]);
-			cur_dsd = cont_pkt->dsd;
+			cur_dsd = (uint32_t *) cont_pkt->dseg_0_address;
 			avail_dsds = 5;
 			entry_count++;
 		}
 
-		append_dsd64(&cur_dsd, sg);
+		sle_dma = sg_dma_address(sg);
+		*cur_dsd++   = cpu_to_le32(LSD(sle_dma));
+		*cur_dsd++   = cpu_to_le32(MSD(sle_dma));
+		*cur_dsd++   = cpu_to_le32(sg_dma_len(sg));
 		avail_dsds--;
 	}
 
 	index = 0;
 
 	for_each_sg(bsg_job->reply_payload.sg_list, sg, rsp_dsds, index) {
+		dma_addr_t       sle_dma;
+
 		/* Allocate additional continuation packets? */
 		if (avail_dsds == 0) {
 			/*
@@ -3091,12 +3142,15 @@ qla24xx_ct_iocb(srb_t *sp, struct ct_entry_24xx *ct_iocb)
 			       */
 			cont_pkt = qla2x00_prep_cont_type1_iocb(vha,
 			    ha->req_q_map[0]);
-			cur_dsd = cont_pkt->dsd;
+			cur_dsd = (uint32_t *) cont_pkt->dseg_0_address;
 			avail_dsds = 5;
 			entry_count++;
 		}
 
-		append_dsd64(&cur_dsd, sg);
+		sle_dma = sg_dma_address(sg);
+		*cur_dsd++   = cpu_to_le32(LSD(sle_dma));
+		*cur_dsd++   = cpu_to_le32(MSD(sle_dma));
+		*cur_dsd++   = cpu_to_le32(sg_dma_len(sg));
 		avail_dsds--;
 	}
         ct_iocb->entry_count = entry_count;
@@ -3317,8 +3371,10 @@ sufficient_dsds:
 		*fcp_dl = htonl((uint32_t)scsi_bufflen(cmd));
 
 		cmd_pkt->fcp_cmnd_dseg_len = cpu_to_le16(ctx->fcp_cmnd_len);
-		put_unaligned_le64(ctx->fcp_cmnd_dma,
-				   &cmd_pkt->fcp_cmnd_dseg_address);
+		cmd_pkt->fcp_cmnd_dseg_address[0] =
+		    cpu_to_le32(LSD(ctx->fcp_cmnd_dma));
+		cmd_pkt->fcp_cmnd_dseg_address[1] =
+		    cpu_to_le32(MSD(ctx->fcp_cmnd_dma));
 
 		sp->flags |= SRB_FCP_CMND_DMA_VALID;
 		cmd_pkt->byte_count = cpu_to_le32((uint32_t)scsi_bufflen(cmd));
@@ -3330,7 +3386,6 @@ sufficient_dsds:
 		cmd_pkt->entry_status = (uint8_t) rsp->id;
 	} else {
 		struct cmd_type_7 *cmd_pkt;
-
 		req_cnt = qla24xx_calc_iocbs(vha, tot_dsds);
 		if (req->cnt < (req_cnt + 2)) {
 			cnt = (uint16_t)RD_REG_DWORD_RELAXED(
@@ -3535,13 +3590,15 @@ qla_nvme_ls(srb_t *sp, struct pt_ls4_request *cmd_pkt)
 
 	cmd_pkt->tx_dseg_count = 1;
 	cmd_pkt->tx_byte_count = nvme->u.nvme.cmd_len;
-	cmd_pkt->dsd[0].length = nvme->u.nvme.cmd_len;
-	put_unaligned_le64(nvme->u.nvme.cmd_dma, &cmd_pkt->dsd[0].address);
+	cmd_pkt->dseg0_len = nvme->u.nvme.cmd_len;
+	cmd_pkt->dseg0_address[0] = cpu_to_le32(LSD(nvme->u.nvme.cmd_dma));
+	cmd_pkt->dseg0_address[1] = cpu_to_le32(MSD(nvme->u.nvme.cmd_dma));
 
 	cmd_pkt->rx_dseg_count = 1;
 	cmd_pkt->rx_byte_count = nvme->u.nvme.rsp_len;
-	cmd_pkt->dsd[1].length  = nvme->u.nvme.rsp_len;
-	put_unaligned_le64(nvme->u.nvme.rsp_dma, &cmd_pkt->dsd[1].address);
+	cmd_pkt->dseg1_len  = nvme->u.nvme.rsp_len;
+	cmd_pkt->dseg1_address[0] =  cpu_to_le32(LSD(nvme->u.nvme.rsp_dma));
+	cmd_pkt->dseg1_address[1] =  cpu_to_le32(MSD(nvme->u.nvme.rsp_dma));
 
 	return rval;
 }
@@ -3680,7 +3737,7 @@ qla25xx_build_bidir_iocb(srb_t *sp, struct scsi_qla_host *vha,
 				struct cmd_bidir *cmd_pkt, uint32_t tot_dsds)
 {
 	uint16_t avail_dsds;
-	struct dsd64 *cur_dsd;
+	uint32_t *cur_dsd;
 	uint32_t req_data_len = 0;
 	uint32_t rsp_data_len = 0;
 	struct scatterlist *sg;
@@ -3689,7 +3746,8 @@ qla25xx_build_bidir_iocb(srb_t *sp, struct scsi_qla_host *vha,
 	struct bsg_job *bsg_job = sp->u.bsg_job;
 
 	/*Update entry type to indicate bidir command */
-	put_unaligned_le32(COMMAND_BIDIRECTIONAL, &cmd_pkt->entry_type);
+	*((uint32_t *)(&cmd_pkt->entry_type)) =
+		cpu_to_le32(COMMAND_BIDIRECTIONAL);
 
 	/* Set the transfer direction, in this set both flags
 	 * Also set the BD_WRAP_BACK flag, firmware will take care
@@ -3715,12 +3773,13 @@ qla25xx_build_bidir_iocb(srb_t *sp, struct scsi_qla_host *vha,
 	 * are bundled in continuation iocb
 	 */
 	avail_dsds = 1;
-	cur_dsd = &cmd_pkt->fcp_dsd;
+	cur_dsd = (uint32_t *)&cmd_pkt->fcp_data_dseg_address;
 
 	index = 0;
 
 	for_each_sg(bsg_job->request_payload.sg_list, sg,
 				bsg_job->request_payload.sg_cnt, index) {
+		dma_addr_t sle_dma;
 		cont_a64_entry_t *cont_pkt;
 
 		/* Allocate additional continuation packets */
@@ -3729,11 +3788,14 @@ qla25xx_build_bidir_iocb(srb_t *sp, struct scsi_qla_host *vha,
 			 * 5 DSDS
 			 */
 			cont_pkt = qla2x00_prep_cont_type1_iocb(vha, vha->req);
-			cur_dsd = cont_pkt->dsd;
+			cur_dsd = (uint32_t *) cont_pkt->dseg_0_address;
 			avail_dsds = 5;
 			entry_count++;
 		}
-		append_dsd64(&cur_dsd, sg);
+		sle_dma = sg_dma_address(sg);
+		*cur_dsd++   = cpu_to_le32(LSD(sle_dma));
+		*cur_dsd++   = cpu_to_le32(MSD(sle_dma));
+		*cur_dsd++   = cpu_to_le32(sg_dma_len(sg));
 		avail_dsds--;
 	}
 	/* For read request DSD will always goes to continuation IOCB
@@ -3743,6 +3805,7 @@ qla25xx_build_bidir_iocb(srb_t *sp, struct scsi_qla_host *vha,
 	 */
 	for_each_sg(bsg_job->reply_payload.sg_list, sg,
 				bsg_job->reply_payload.sg_cnt, index) {
+		dma_addr_t sle_dma;
 		cont_a64_entry_t *cont_pkt;
 
 		/* Allocate additional continuation packets */
@@ -3751,11 +3814,14 @@ qla25xx_build_bidir_iocb(srb_t *sp, struct scsi_qla_host *vha,
 			 * 5 DSDS
 			 */
 			cont_pkt = qla2x00_prep_cont_type1_iocb(vha, vha->req);
-			cur_dsd = cont_pkt->dsd;
+			cur_dsd = (uint32_t *) cont_pkt->dseg_0_address;
 			avail_dsds = 5;
 			entry_count++;
 		}
-		append_dsd64(&cur_dsd, sg);
+		sle_dma = sg_dma_address(sg);
+		*cur_dsd++   = cpu_to_le32(LSD(sle_dma));
+		*cur_dsd++   = cpu_to_le32(MSD(sle_dma));
+		*cur_dsd++   = cpu_to_le32(sg_dma_len(sg));
 		avail_dsds--;
 	}
 	/* This value should be same as number of IOCB required for this cmd */

@@ -829,9 +829,7 @@ static void lock_torture_cleanup(void)
 						"End of test: SUCCESS");
 
 	kfree(cxt.lwsa);
-	cxt.lwsa = NULL;
 	kfree(cxt.lrsa);
-	cxt.lrsa = NULL;
 
 end:
 	torture_cleanup_end();
@@ -975,7 +973,7 @@ static int __init lock_torture_init(void)
 			goto unwind;
 	}
 	if (stutter > 0) {
-		firsterr = torture_stutter_init(stutter, stutter);
+		firsterr = torture_stutter_init(stutter);
 		if (firsterr)
 			goto unwind;
 	}

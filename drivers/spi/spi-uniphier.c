@@ -328,12 +328,7 @@ static int uniphier_spi_transfer_one(struct spi_master *master,
 				     struct spi_transfer *t)
 {
 	struct uniphier_spi_priv *priv = spi_master_get_devdata(master);
-	struct device *dev = master->dev.parent;
-	unsigned long time_left;
-
-	/* Terminate and return success for 0 byte length transfer */
-	if (!t->len)
-		return 0;
+	int status;
 
 	uniphier_spi_setup_transfer(spi, t);
 
@@ -343,15 +338,13 @@ static int uniphier_spi_transfer_one(struct spi_master *master,
 
 	uniphier_spi_irq_enable(spi, SSI_IE_RCIE | SSI_IE_RORIE);
 
-	time_left = wait_for_completion_timeout(&priv->xfer_done,
-					msecs_to_jiffies(SSI_TIMEOUT_MS));
+	status = wait_for_completion_timeout(&priv->xfer_done,
+					     msecs_to_jiffies(SSI_TIMEOUT_MS));
 
 	uniphier_spi_irq_disable(spi, SSI_IE_RCIE | SSI_IE_RORIE);
 
-	if (!time_left) {
-		dev_err(dev, "transfer timeout.\n");
-		return -ETIMEDOUT;
-	}
+	if (status < 0)
+		return status;
 
 	return priv->error;
 }

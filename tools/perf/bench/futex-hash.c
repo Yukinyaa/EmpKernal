@@ -18,7 +18,6 @@
 #include <stdlib.h>
 #include <linux/compiler.h>
 #include <linux/kernel.h>
-#include <linux/zalloc.h>
 #include <sys/time.h>
 
 #include "../util/stat.h"
@@ -215,7 +214,7 @@ int bench_futex_hash(int argc, const char **argv)
 				       &worker[i].futex[nfutexes-1], t);
 		}
 
-		zfree(&worker[i].futex);
+		free(worker[i].futex);
 	}
 
 	print_summary();

@@ -93,11 +93,6 @@ Device Instance and Driver Handling
 Driver Load
 -----------
 
-Component Helper Usage
-~~~~~~~~~~~~~~~~~~~~~~
-
-.. kernel-doc:: drivers/gpu/drm/drm_drv.c
-   :doc: component helper usage recommendations
 
 IRQ Helper Library
 ~~~~~~~~~~~~~~~~~~

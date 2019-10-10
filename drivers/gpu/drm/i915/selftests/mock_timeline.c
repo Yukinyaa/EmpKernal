@@ -13,8 +13,9 @@ void mock_timeline_init(struct i915_timeline *timeline, u64 context)
 	timeline->i915 = NULL;
 	timeline->fence_context = context;
 
-	mutex_init(&timeline->mutex);
+	spin_lock_init(&timeline->lock);
 
+	INIT_ACTIVE_REQUEST(&timeline->barrier);
 	INIT_ACTIVE_REQUEST(&timeline->last_request);
 	INIT_LIST_HEAD(&timeline->requests);
 

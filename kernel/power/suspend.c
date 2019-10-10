@@ -1,10 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * kernel/power/suspend.c - Suspend to RAM and standby functionality.
  *
  * Copyright (c) 2003 Patrick Mochel
  * Copyright (c) 2003 Open Source Development Lab
  * Copyright (c) 2009 Rafael J. Wysocki <rjw@sisk.pl>, Novell Inc.
+ *
+ * This file is released under the GPLv2.
  */
 
 #define pr_fmt(fmt) "PM: " fmt
@@ -16,6 +17,7 @@
 #include <linux/console.h>
 #include <linux/cpu.h>
 #include <linux/cpuidle.h>
+#include <linux/syscalls.h>
 #include <linux/gfp.h>
 #include <linux/io.h>
 #include <linux/kernel.h>
@@ -61,17 +63,11 @@ static DECLARE_SWAIT_QUEUE_HEAD(s2idle_wait_head);
 enum s2idle_states __read_mostly s2idle_state;
 static DEFINE_RAW_SPINLOCK(s2idle_lock);
 
-/**
- * pm_suspend_default_s2idle - Check if suspend-to-idle is the default suspend.
- *
- * Return 'true' if suspend-to-idle has been selected as the default system
- * suspend method.
- */
-bool pm_suspend_default_s2idle(void)
+bool pm_suspend_via_s2idle(void)
 {
 	return mem_sleep_current == PM_SUSPEND_TO_IDLE;
 }
-EXPORT_SYMBOL_GPL(pm_suspend_default_s2idle);
+EXPORT_SYMBOL_GPL(pm_suspend_via_s2idle);
 
 void s2idle_set_ops(const struct platform_s2idle_ops *ops)
 {
@@ -432,7 +428,7 @@ static int suspend_enter(suspend_state_t state, bool *wakeup)
 	if (suspend_test(TEST_PLATFORM))
 		goto Platform_wake;
 
-	error = suspend_disable_secondary_cpus();
+	error = disable_nonboot_cpus();
 	if (error || suspend_test(TEST_CPUS))
 		goto Enable_cpus;
 
@@ -462,7 +458,7 @@ static int suspend_enter(suspend_state_t state, bool *wakeup)
 	BUG_ON(irqs_disabled());
 
  Enable_cpus:
-	suspend_enable_secondary_cpus();
+	enable_nonboot_cpus();
 
  Platform_wake:
 	platform_resume_noirq(state);
@@ -492,9 +488,6 @@ int suspend_devices_and_enter(suspend_state_t state)
 		return -ENOSYS;
 
 	pm_suspend_target_state = state;
-
-	if (state == PM_SUSPEND_TO_IDLE)
-		pm_set_suspend_no_platform();
 
 	error = platform_suspend_begin(state);
 	if (error)
@@ -575,11 +568,13 @@ static int enter_state(suspend_state_t state)
 	if (state == PM_SUSPEND_TO_IDLE)
 		s2idle_begin();
 
-	if (!IS_ENABLED(CONFIG_SUSPEND_SKIP_SYNC)) {
-		trace_suspend_resume(TPS("sync_filesystems"), 0, true);
-		ksys_sync_helper();
-		trace_suspend_resume(TPS("sync_filesystems"), 0, false);
-	}
+#ifndef CONFIG_SUSPEND_SKIP_SYNC
+	trace_suspend_resume(TPS("sync_filesystems"), 0, true);
+	pr_info("Syncing filesystems ... ");
+	ksys_sync();
+	pr_cont("done.\n");
+	trace_suspend_resume(TPS("sync_filesystems"), 0, false);
+#endif
 
 	pm_pr_dbg("Preparing system for sleep (%s)\n", mem_sleep_labels[state]);
 	pm_suspend_clear_flags();

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * gpio-regulator.c
  *
@@ -12,6 +11,11 @@
  *
  * Copyright (c) 2009 Nokia Corporation
  * Roger Quadros <ext-roger.quadros@nokia.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; either version 2 of the
+ * License, or (at your option) any later version.
  *
  * This is useful for systems with mixed controllable and
  * non-controllable regulators, as well as for allowing testing on
@@ -32,6 +36,7 @@
 
 struct gpio_regulator_data {
 	struct regulator_desc desc;
+	struct regulator_dev *dev;
 
 	struct gpio_desc **gpiods;
 	int nr_gpios;
@@ -120,7 +125,7 @@ static int gpio_regulator_set_current_limit(struct regulator_dev *dev,
 	return 0;
 }
 
-static const struct regulator_ops gpio_regulator_voltage_ops = {
+static struct regulator_ops gpio_regulator_voltage_ops = {
 	.get_voltage = gpio_regulator_get_value,
 	.set_voltage = gpio_regulator_set_voltage,
 	.list_voltage = gpio_regulator_list_voltage,
@@ -216,7 +221,7 @@ of_get_gpio_regulator_config(struct device *dev, struct device_node *np,
 	return config;
 }
 
-static const struct regulator_ops gpio_regulator_current_ops = {
+static struct regulator_ops gpio_regulator_current_ops = {
 	.get_current_limit = gpio_regulator_get_value,
 	.set_current_limit = gpio_regulator_set_current_limit,
 };
@@ -228,7 +233,6 @@ static int gpio_regulator_probe(struct platform_device *pdev)
 	struct device_node *np = dev->of_node;
 	struct gpio_regulator_data *drvdata;
 	struct regulator_config cfg = { };
-	struct regulator_dev *rdev;
 	enum gpiod_flags gflags;
 	int ptr, ret, state, i;
 
@@ -322,14 +326,23 @@ static int gpio_regulator_probe(struct platform_device *pdev)
 	if (IS_ERR(cfg.ena_gpiod))
 		return PTR_ERR(cfg.ena_gpiod);
 
-	rdev = devm_regulator_register(dev, &drvdata->desc, &cfg);
-	if (IS_ERR(rdev)) {
-		ret = PTR_ERR(rdev);
+	drvdata->dev = regulator_register(&drvdata->desc, &cfg);
+	if (IS_ERR(drvdata->dev)) {
+		ret = PTR_ERR(drvdata->dev);
 		dev_err(dev, "Failed to register regulator: %d\n", ret);
 		return ret;
 	}
 
 	platform_set_drvdata(pdev, drvdata);
+
+	return 0;
+}
+
+static int gpio_regulator_remove(struct platform_device *pdev)
+{
+	struct gpio_regulator_data *drvdata = platform_get_drvdata(pdev);
+
+	regulator_unregister(drvdata->dev);
 
 	return 0;
 }
@@ -344,6 +357,7 @@ MODULE_DEVICE_TABLE(of, regulator_gpio_of_match);
 
 static struct platform_driver gpio_regulator_driver = {
 	.probe		= gpio_regulator_probe,
+	.remove		= gpio_regulator_remove,
 	.driver		= {
 		.name		= "gpio-regulator",
 		.of_match_table = of_match_ptr(regulator_gpio_of_match),

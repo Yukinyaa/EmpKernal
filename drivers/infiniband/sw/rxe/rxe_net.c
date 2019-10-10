@@ -338,13 +338,13 @@ static void prepare_ipv6_hdr(struct dst_entry *dst, struct sk_buff *skb,
 	ip6h->payload_len = htons(skb->len - sizeof(*ip6h));
 }
 
-static int prepare4(struct rxe_pkt_info *pkt, struct sk_buff *skb)
+static int prepare4(struct rxe_pkt_info *pkt, struct sk_buff *skb,
+		    struct rxe_av *av)
 {
 	struct rxe_qp *qp = pkt->qp;
 	struct dst_entry *dst;
 	bool xnet = false;
 	__be16 df = htons(IP_DF);
-	struct rxe_av *av = rxe_get_av(pkt);
 	struct in_addr *saddr = &av->sgid_addr._sockaddr_in.sin_addr;
 	struct in_addr *daddr = &av->dgid_addr._sockaddr_in.sin_addr;
 
@@ -364,11 +364,11 @@ static int prepare4(struct rxe_pkt_info *pkt, struct sk_buff *skb)
 	return 0;
 }
 
-static int prepare6(struct rxe_pkt_info *pkt, struct sk_buff *skb)
+static int prepare6(struct rxe_pkt_info *pkt, struct sk_buff *skb,
+		    struct rxe_av *av)
 {
 	struct rxe_qp *qp = pkt->qp;
 	struct dst_entry *dst;
-	struct rxe_av *av = rxe_get_av(pkt);
 	struct in6_addr *saddr = &av->sgid_addr._sockaddr_in6.sin6_addr;
 	struct in6_addr *daddr = &av->dgid_addr._sockaddr_in6.sin6_addr;
 
@@ -392,15 +392,16 @@ static int prepare6(struct rxe_pkt_info *pkt, struct sk_buff *skb)
 int rxe_prepare(struct rxe_pkt_info *pkt, struct sk_buff *skb, u32 *crc)
 {
 	int err = 0;
+	struct rxe_av *av = rxe_get_av(pkt);
 
-	if (skb->protocol == htons(ETH_P_IP))
-		err = prepare4(pkt, skb);
-	else if (skb->protocol == htons(ETH_P_IPV6))
-		err = prepare6(pkt, skb);
+	if (av->network_type == RDMA_NETWORK_IPV4)
+		err = prepare4(pkt, skb, av);
+	else if (av->network_type == RDMA_NETWORK_IPV6)
+		err = prepare6(pkt, skb, av);
 
 	*crc = rxe_icrc_hdr(pkt, skb);
 
-	if (ether_addr_equal(skb->dev->dev_addr, rxe_get_av(pkt)->dmac))
+	if (ether_addr_equal(skb->dev->dev_addr, av->dmac))
 		pkt->mask |= RXE_LOOPBACK_MASK;
 
 	return err;
@@ -421,7 +422,10 @@ static void rxe_skb_tx_dtor(struct sk_buff *skb)
 
 int rxe_send(struct rxe_pkt_info *pkt, struct sk_buff *skb)
 {
+	struct rxe_av *av;
 	int err;
+
+	av = rxe_get_av(pkt);
 
 	skb->destructor = rxe_skb_tx_dtor;
 	skb->sk = pkt->qp->sk->sk;
@@ -429,12 +433,12 @@ int rxe_send(struct rxe_pkt_info *pkt, struct sk_buff *skb)
 	rxe_add_ref(pkt->qp);
 	atomic_inc(&pkt->qp->skb_out);
 
-	if (skb->protocol == htons(ETH_P_IP)) {
+	if (av->network_type == RDMA_NETWORK_IPV4) {
 		err = ip_local_out(dev_net(skb_dst(skb)->dev), skb->sk, skb);
-	} else if (skb->protocol == htons(ETH_P_IPV6)) {
+	} else if (av->network_type == RDMA_NETWORK_IPV6) {
 		err = ip6_local_out(dev_net(skb_dst(skb)->dev), skb->sk, skb);
 	} else {
-		pr_err("Unknown layer 3 protocol: %d\n", skb->protocol);
+		pr_err("Unknown layer 3 protocol: %d\n", av->network_type);
 		atomic_dec(&pkt->qp->skb_out);
 		rxe_drop_ref(pkt->qp);
 		kfree_skb(skb);
@@ -458,7 +462,7 @@ struct sk_buff *rxe_init_packet(struct rxe_dev *rxe, struct rxe_av *av,
 				int paylen, struct rxe_pkt_info *pkt)
 {
 	unsigned int hdr_len;
-	struct sk_buff *skb = NULL;
+	struct sk_buff *skb;
 	struct net_device *ndev;
 	const struct ib_gid_attr *attr;
 	const int port_num = 1;
@@ -466,6 +470,7 @@ struct sk_buff *rxe_init_packet(struct rxe_dev *rxe, struct rxe_av *av,
 	attr = rdma_get_gid_attr(&rxe->ib_dev, port_num, av->grh.sgid_index);
 	if (IS_ERR(attr))
 		return NULL;
+	ndev = attr->ndev;
 
 	if (av->network_type == RDMA_NETWORK_IPV4)
 		hdr_len = ETH_HLEN + sizeof(struct udphdr) +
@@ -474,26 +479,15 @@ struct sk_buff *rxe_init_packet(struct rxe_dev *rxe, struct rxe_av *av,
 		hdr_len = ETH_HLEN + sizeof(struct udphdr) +
 			sizeof(struct ipv6hdr);
 
-	rcu_read_lock();
-	ndev = rdma_read_gid_attr_ndev_rcu(attr);
-	if (IS_ERR(ndev)) {
-		rcu_read_unlock();
-		goto out;
-	}
 	skb = alloc_skb(paylen + hdr_len + LL_RESERVED_SPACE(ndev),
 			GFP_ATOMIC);
 
-	if (unlikely(!skb)) {
-		rcu_read_unlock();
+	if (unlikely(!skb))
 		goto out;
-	}
 
-	skb_reserve(skb, hdr_len + LL_RESERVED_SPACE(ndev));
+	skb_reserve(skb, hdr_len + LL_RESERVED_SPACE(rxe->ndev));
 
-	/* FIXME: hold reference to this netdev until life of this skb. */
 	skb->dev	= ndev;
-	rcu_read_unlock();
-
 	if (av->network_type == RDMA_NETWORK_IPV4)
 		skb->protocol = htons(ETH_P_IP);
 	else

@@ -22,6 +22,11 @@ static const struct of_device_id fpga_region_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, fpga_region_of_match);
 
+static int fpga_region_of_node_match(struct device *dev, const void *data)
+{
+	return dev->of_node == data;
+}
+
 /**
  * of_fpga_region_find - find FPGA region
  * @np: device node of FPGA Region
@@ -32,7 +37,7 @@ MODULE_DEVICE_TABLE(of, fpga_region_of_match);
  */
 static struct fpga_region *of_fpga_region_find(struct device_node *np)
 {
-	return fpga_region_class_find(NULL, np, device_match_of_node);
+	return fpga_region_class_find(NULL, np, fpga_region_of_node_match);
 }
 
 /**

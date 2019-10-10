@@ -9,7 +9,6 @@
 #include <asm/neon.h>
 #include <asm/simd.h>
 #include <crypto/internal/hash.h>
-#include <crypto/internal/simd.h>
 #include <crypto/nhpoly1305.h>
 #include <linux/module.h>
 
@@ -26,7 +25,7 @@ static void _nh_neon(const u32 *key, const u8 *message, size_t message_len,
 static int nhpoly1305_neon_update(struct shash_desc *desc,
 				  const u8 *src, unsigned int srclen)
 {
-	if (srclen < 64 || !crypto_simd_usable())
+	if (srclen < 64 || !may_use_simd())
 		return crypto_nhpoly1305_update(desc, src, srclen);
 
 	do {
@@ -57,7 +56,7 @@ static struct shash_alg nhpoly1305_alg = {
 
 static int __init nhpoly1305_mod_init(void)
 {
-	if (!cpu_have_named_feature(ASIMD))
+	if (!(elf_hwcap & HWCAP_ASIMD))
 		return -ENODEV;
 
 	return crypto_register_shash(&nhpoly1305_alg);

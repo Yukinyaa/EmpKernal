@@ -35,20 +35,6 @@
 			reg = <0x9ef00000 0x00100000>;
 			no-map;
 		};
-
-		gfx_memory: framebuffer {
-			size = <0x01000000>;
-			alignment = <0x01000000>;
-			compatible = "shared-dma-pool";
-			reusable;
-		};
-
-		video_engine_memory: jpegbuffer {
-			size = <0x02000000>;	/* 32M */
-			alignment = <0x01000000>;
-			compatible = "shared-dma-pool";
-			reusable;
-		};
 	};
 
 	leds {
@@ -252,7 +238,6 @@
 
 &gfx {
 	status = "okay";
-	memory-region = <&gfx_memory>;
 };
 
 &pinctrl {
@@ -311,10 +296,3 @@
 &adc {
 	status = "okay";
 };
-
-&video {
-	status = "okay";
-	memory-region = <&video_engine_memory>;
-};
-
-#include "ibm-power9-dual.dtsi"

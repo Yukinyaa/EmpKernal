@@ -239,6 +239,7 @@ void intel_vgpu_reset_mmio(struct intel_vgpu *vgpu, bool dmlr)
 
 	if (dmlr) {
 		memcpy(vgpu->mmio.vreg, mmio, info->mmio_size);
+		memcpy(vgpu->mmio.sreg, mmio, info->mmio_size);
 
 		vgpu_vreg_t(vgpu, GEN6_GT_THREAD_STATUS_REG) = 0;
 
@@ -279,6 +280,7 @@ void intel_vgpu_reset_mmio(struct intel_vgpu *vgpu, bool dmlr)
 		 * touched
 		 */
 		memcpy(vgpu->mmio.vreg, mmio, GVT_GEN8_MMIO_RESET_OFFSET);
+		memcpy(vgpu->mmio.sreg, mmio, GVT_GEN8_MMIO_RESET_OFFSET);
 	}
 
 }
@@ -294,9 +296,11 @@ int intel_vgpu_init_mmio(struct intel_vgpu *vgpu)
 {
 	const struct intel_gvt_device_info *info = &vgpu->gvt->device_info;
 
-	vgpu->mmio.vreg = vzalloc(info->mmio_size);
+	vgpu->mmio.vreg = vzalloc(array_size(info->mmio_size, 2));
 	if (!vgpu->mmio.vreg)
 		return -ENOMEM;
+
+	vgpu->mmio.sreg = vgpu->mmio.vreg + info->mmio_size;
 
 	intel_vgpu_reset_mmio(vgpu, true);
 
@@ -311,5 +315,5 @@ int intel_vgpu_init_mmio(struct intel_vgpu *vgpu)
 void intel_vgpu_clean_mmio(struct intel_vgpu *vgpu)
 {
 	vfree(vgpu->mmio.vreg);
-	vgpu->mmio.vreg = NULL;
+	vgpu->mmio.vreg = vgpu->mmio.sreg = NULL;
 }

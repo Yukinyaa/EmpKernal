@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2004 IBM Corporation
  * Copyright (C) 2014 Intel Corporation
@@ -13,6 +12,12 @@
  * Maintained by: <tpmdd-devel@lists.sourceforge.net>
  *
  * TPM chip management routines.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation, version 2 of the
+ * License.
+ *
  */
 
 #include <linux/poll.h>
@@ -77,18 +82,6 @@ static int tpm_go_idle(struct tpm_chip *chip)
 	return chip->ops->go_idle(chip);
 }
 
-static void tpm_clk_enable(struct tpm_chip *chip)
-{
-	if (chip->ops->clk_enable)
-		chip->ops->clk_enable(chip, true);
-}
-
-static void tpm_clk_disable(struct tpm_chip *chip)
-{
-	if (chip->ops->clk_enable)
-		chip->ops->clk_enable(chip, false);
-}
-
 /**
  * tpm_chip_start() - power on the TPM
  * @chip:	a TPM chip to use
@@ -101,12 +94,13 @@ int tpm_chip_start(struct tpm_chip *chip)
 {
 	int ret;
 
-	tpm_clk_enable(chip);
+	if (chip->ops->clk_enable)
+		chip->ops->clk_enable(chip, true);
 
 	if (chip->locality == -1) {
 		ret = tpm_request_locality(chip);
 		if (ret) {
-			tpm_clk_disable(chip);
+			chip->ops->clk_enable(chip, false);
 			return ret;
 		}
 	}
@@ -114,7 +108,8 @@ int tpm_chip_start(struct tpm_chip *chip)
 	ret = tpm_cmd_ready(chip);
 	if (ret) {
 		tpm_relinquish_locality(chip);
-		tpm_clk_disable(chip);
+		if (chip->ops->clk_enable)
+			chip->ops->clk_enable(chip, false);
 		return ret;
 	}
 
@@ -134,7 +129,8 @@ void tpm_chip_stop(struct tpm_chip *chip)
 {
 	tpm_go_idle(chip);
 	tpm_relinquish_locality(chip);
-	tpm_clk_disable(chip);
+	if (chip->ops->clk_enable)
+		chip->ops->clk_enable(chip, false);
 }
 EXPORT_SYMBOL_GPL(tpm_chip_stop);
 
@@ -298,15 +294,15 @@ static int tpm_class_shutdown(struct device *dev)
 {
 	struct tpm_chip *chip = container_of(dev, struct tpm_chip, dev);
 
-	down_write(&chip->ops_sem);
 	if (chip->flags & TPM_CHIP_FLAG_TPM2) {
+		down_write(&chip->ops_sem);
 		if (!tpm_chip_start(chip)) {
 			tpm2_shutdown(chip, TPM2_SU_CLEAR);
 			tpm_chip_stop(chip);
 		}
+		chip->ops = NULL;
+		up_write(&chip->ops_sem);
 	}
-	chip->ops = NULL;
-	up_write(&chip->ops_sem);
 
 	return 0;
 }
@@ -554,20 +550,6 @@ static int tpm_add_hwrng(struct tpm_chip *chip)
 	return hwrng_register(&chip->hwrng);
 }
 
-static int tpm_get_pcr_allocation(struct tpm_chip *chip)
-{
-	int rc;
-
-	rc = (chip->flags & TPM_CHIP_FLAG_TPM2) ?
-	     tpm2_get_pcr_allocation(chip) :
-	     tpm1_get_pcr_allocation(chip);
-
-	if (rc > 0)
-		return -ENODEV;
-
-	return rc;
-}
-
 /*
  * tpm_chip_register() - create a character device for the TPM chip
  * @chip: TPM chip to use.
@@ -587,12 +569,6 @@ int tpm_chip_register(struct tpm_chip *chip)
 	if (rc)
 		return rc;
 	rc = tpm_auto_startup(chip);
-	if (rc) {
-		tpm_chip_stop(chip);
-		return rc;
-	}
-
-	rc = tpm_get_pcr_allocation(chip);
 	tpm_chip_stop(chip);
 	if (rc)
 		return rc;

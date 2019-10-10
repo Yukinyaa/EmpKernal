@@ -9,6 +9,7 @@
 
 #include "debug.h"
 #include "../perf.h"
+#include "../util/util.h"
 #include <subcmd/parse-options.h>
 #include "../util/header.h"
 #include "../util/cloexec.h"
@@ -23,7 +24,6 @@
 #include <sys/time.h>
 #include <errno.h>
 #include <linux/time64.h>
-#include <linux/zalloc.h>
 
 #define K 1024
 

@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * RTC subsystem, nvmem interface
  *
  * Copyright (C) 2017 Alexandre Belloni
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/err.h>
@@ -43,7 +46,7 @@ static int rtc_nvram_register(struct rtc_device *rtc,
 {
 	int err;
 
-	rtc->nvram = kzalloc(sizeof(*rtc->nvram), GFP_KERNEL);
+	rtc->nvram = kzalloc(sizeof(struct bin_attribute), GFP_KERNEL);
 	if (!rtc->nvram)
 		return -ENOMEM;
 

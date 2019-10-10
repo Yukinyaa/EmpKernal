@@ -269,7 +269,6 @@ err:
 struct gss_upcall_msg {
 	refcount_t count;
 	kuid_t	uid;
-	const char *service_name;
 	struct rpc_pipe_msg msg;
 	struct list_head list;
 	struct gss_auth *auth;
@@ -317,7 +316,6 @@ gss_release_msg(struct gss_upcall_msg *gss_msg)
 		gss_put_ctx(gss_msg->ctx);
 	rpc_destroy_wait_queue(&gss_msg->rpc_waitqueue);
 	gss_put_auth(gss_msg->auth);
-	kfree_const(gss_msg->service_name);
 	kfree(gss_msg);
 }
 
@@ -412,12 +410,9 @@ gss_upcall_callback(struct rpc_task *task)
 	gss_release_msg(gss_msg);
 }
 
-static void gss_encode_v0_msg(struct gss_upcall_msg *gss_msg,
-			      const struct cred *cred)
+static void gss_encode_v0_msg(struct gss_upcall_msg *gss_msg)
 {
-	struct user_namespace *userns = cred->user_ns;
-
-	uid_t uid = from_kuid_munged(userns, gss_msg->uid);
+	uid_t uid = from_kuid(&init_user_ns, gss_msg->uid);
 	memcpy(gss_msg->databuf, &uid, sizeof(uid));
 	gss_msg->msg.data = gss_msg->databuf;
 	gss_msg->msg.len = sizeof(uid);
@@ -425,31 +420,17 @@ static void gss_encode_v0_msg(struct gss_upcall_msg *gss_msg,
 	BUILD_BUG_ON(sizeof(uid) > sizeof(gss_msg->databuf));
 }
 
-static ssize_t
-gss_v0_upcall(struct file *file, struct rpc_pipe_msg *msg,
-		char __user *buf, size_t buflen)
-{
-	struct gss_upcall_msg *gss_msg = container_of(msg,
-						      struct gss_upcall_msg,
-						      msg);
-	if (msg->copied == 0)
-		gss_encode_v0_msg(gss_msg, file->f_cred);
-	return rpc_pipe_generic_upcall(file, msg, buf, buflen);
-}
-
 static int gss_encode_v1_msg(struct gss_upcall_msg *gss_msg,
 				const char *service_name,
-				const char *target_name,
-				const struct cred *cred)
+				const char *target_name)
 {
-	struct user_namespace *userns = cred->user_ns;
 	struct gss_api_mech *mech = gss_msg->auth->mech;
 	char *p = gss_msg->databuf;
 	size_t buflen = sizeof(gss_msg->databuf);
 	int len;
 
 	len = scnprintf(p, buflen, "mech=%s uid=%d", mech->gm_name,
-			from_kuid_munged(userns, gss_msg->uid));
+			from_kuid(&init_user_ns, gss_msg->uid));
 	buflen -= len;
 	p += len;
 	gss_msg->msg.len = len;
@@ -510,25 +491,6 @@ out_overflow:
 	return -ENOMEM;
 }
 
-static ssize_t
-gss_v1_upcall(struct file *file, struct rpc_pipe_msg *msg,
-		char __user *buf, size_t buflen)
-{
-	struct gss_upcall_msg *gss_msg = container_of(msg,
-						      struct gss_upcall_msg,
-						      msg);
-	int err;
-	if (msg->copied == 0) {
-		err = gss_encode_v1_msg(gss_msg,
-					gss_msg->service_name,
-					gss_msg->auth->target_name,
-					file->f_cred);
-		if (err)
-			return err;
-	}
-	return rpc_pipe_generic_upcall(file, msg, buf, buflen);
-}
-
 static struct gss_upcall_msg *
 gss_alloc_msg(struct gss_auth *gss_auth,
 		kuid_t uid, const char *service_name)
@@ -551,14 +513,16 @@ gss_alloc_msg(struct gss_auth *gss_auth,
 	refcount_set(&gss_msg->count, 1);
 	gss_msg->uid = uid;
 	gss_msg->auth = gss_auth;
-	kref_get(&gss_auth->kref);
-	if (service_name) {
-		gss_msg->service_name = kstrdup_const(service_name, GFP_NOFS);
-		if (!gss_msg->service_name) {
-			err = -ENOMEM;
+	switch (vers) {
+	case 0:
+		gss_encode_v0_msg(gss_msg);
+		break;
+	default:
+		err = gss_encode_v1_msg(gss_msg, service_name, gss_auth->target_name);
+		if (err)
 			goto err_put_pipe_version;
-		}
 	}
+	kref_get(&gss_auth->kref);
 	return gss_msg;
 err_put_pipe_version:
 	put_pipe_version(gss_auth->net);
@@ -617,8 +581,8 @@ gss_refresh_upcall(struct rpc_task *task)
 		/* XXX: warning on the first, under the assumption we
 		 * shouldn't normally hit this case on a refresh. */
 		warn_gssd();
-		rpc_sleep_on_timeout(&pipe_version_rpc_waitqueue,
-				task, NULL, jiffies + (15 * HZ));
+		task->tk_timeout = 15*HZ;
+		rpc_sleep_on(&pipe_version_rpc_waitqueue, task, NULL);
 		err = -EAGAIN;
 		goto out;
 	}
@@ -631,6 +595,7 @@ gss_refresh_upcall(struct rpc_task *task)
 	if (gss_cred->gc_upcall != NULL)
 		rpc_sleep_on(&gss_cred->gc_upcall->rpc_waitqueue, task, NULL);
 	else if (gss_msg->ctx == NULL && gss_msg->msg.errno >= 0) {
+		task->tk_timeout = 0;
 		gss_cred->gc_upcall = gss_msg;
 		/* gss_upcall_callback will release the reference to gss_upcall_msg */
 		refcount_inc(&gss_msg->count);
@@ -742,7 +707,7 @@ gss_pipe_downcall(struct file *filp, const char __user *src, size_t mlen)
 		goto err;
 	}
 
-	uid = make_kuid(current_user_ns(), id);
+	uid = make_kuid(&init_user_ns, id);
 	if (!uid_valid(uid)) {
 		err = -EINVAL;
 		goto err;
@@ -2151,7 +2116,7 @@ static const struct rpc_credops gss_nullops = {
 };
 
 static const struct rpc_pipe_ops gss_upcall_ops_v0 = {
-	.upcall		= gss_v0_upcall,
+	.upcall		= rpc_pipe_generic_upcall,
 	.downcall	= gss_pipe_downcall,
 	.destroy_msg	= gss_pipe_destroy_msg,
 	.open_pipe	= gss_pipe_open_v0,
@@ -2159,7 +2124,7 @@ static const struct rpc_pipe_ops gss_upcall_ops_v0 = {
 };
 
 static const struct rpc_pipe_ops gss_upcall_ops_v1 = {
-	.upcall		= gss_v1_upcall,
+	.upcall		= rpc_pipe_generic_upcall,
 	.downcall	= gss_pipe_downcall,
 	.destroy_msg	= gss_pipe_destroy_msg,
 	.open_pipe	= gss_pipe_open_v1,

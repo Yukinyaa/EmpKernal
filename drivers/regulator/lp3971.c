@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Regulator driver for National Semiconductors LP3971 PMIC chip
  *
@@ -6,6 +5,11 @@
  *  Author: Marek Szyprowski <m.szyprowski@samsung.com>
  *
  * Based on wm8350.c
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
  */
 
 #include <linux/bug.h>

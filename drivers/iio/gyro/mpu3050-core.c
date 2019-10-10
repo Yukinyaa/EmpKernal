@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * MPU3050 gyroscope driver
  *
@@ -866,7 +865,7 @@ static int mpu3050_power_up(struct mpu3050 *mpu3050)
 		dev_err(mpu3050->dev, "error setting power mode\n");
 		return ret;
 	}
-	usleep_range(10000, 20000);
+	msleep(10);
 
 	return 0;
 }
@@ -1151,7 +1150,8 @@ int mpu3050_common_probe(struct device *dev,
 	mpu3050->divisor = 99;
 
 	/* Read the mounting matrix, if present */
-	ret = iio_read_mount_matrix(dev, "mount-matrix", &mpu3050->orientation);
+	ret = of_iio_read_mount_matrix(dev, "mount-matrix",
+				       &mpu3050->orientation);
 	if (ret)
 		return ret;
 

@@ -1,8 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * CBC: Cipher Block Chaining mode
  *
  * Copyright (c) 2006-2016 Herbert Xu <herbert@gondor.apana.org.au>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation; either version 2 of the License, or (at your option)
+ * any later version.
+ *
  */
 
 #include <crypto/algapi.h>
@@ -93,7 +98,7 @@ static void __exit crypto_cbc_module_exit(void)
 	crypto_unregister_template(&crypto_cbc_tmpl);
 }
 
-subsys_initcall(crypto_cbc_module_init);
+module_init(crypto_cbc_module_init);
 module_exit(crypto_cbc_module_exit);
 
 MODULE_LICENSE("GPL");

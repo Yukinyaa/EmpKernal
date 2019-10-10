@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Cryptographic API.
  *
@@ -7,6 +6,10 @@
  * Copyright (c) 2014 Steffen Trumtrar <s.trumtrar@pengutronix.de>
  * Copyright (c) 2013 Vista Silicon S.L.
  * Author: Javier Martin <javier.martin@vista-silicon.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as published
+ * by the Free Software Foundation.
  *
  * Based on omap-aes.c and tegra-aes.c
  */
@@ -351,7 +354,7 @@ static void sahara_decode_status(struct sahara_dev *dev, unsigned int status)
 {
 	u8 state;
 
-	if (!__is_defined(DEBUG))
+	if (!IS_ENABLED(DEBUG))
 		return;
 
 	state = SAHARA_STATUS_GET_STATE(status);
@@ -403,7 +406,7 @@ static void sahara_dump_descriptors(struct sahara_dev *dev)
 {
 	int i;
 
-	if (!__is_defined(DEBUG))
+	if (!IS_ENABLED(DEBUG))
 		return;
 
 	for (i = 0; i < SAHARA_MAX_HW_DESC; i++) {
@@ -424,7 +427,7 @@ static void sahara_dump_links(struct sahara_dev *dev)
 {
 	int i;
 
-	if (!__is_defined(DEBUG))
+	if (!IS_ENABLED(DEBUG))
 		return;
 
 	for (i = 0; i < SAHARA_MAX_HW_LINK; i++) {
@@ -1384,6 +1387,7 @@ MODULE_DEVICE_TABLE(of, sahara_dt_ids);
 static int sahara_probe(struct platform_device *pdev)
 {
 	struct sahara_dev *dev;
+	struct resource *res;
 	u32 version;
 	int irq;
 	int err;
@@ -1397,7 +1401,8 @@ static int sahara_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, dev);
 
 	/* Get the base address */
-	dev->regs_base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	dev->regs_base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(dev->regs_base))
 		return PTR_ERR(dev->regs_base);
 

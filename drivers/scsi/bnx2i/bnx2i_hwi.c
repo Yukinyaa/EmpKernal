@@ -253,6 +253,7 @@ void bnx2i_put_rq_buf(struct bnx2i_conn *bnx2i_conn, int count)
 		writew(ep->qp.rq_prod_idx,
 		       ep->qp.ctx_base + CNIC_RECV_DOORBELL);
 	}
+	mmiowb();
 }
 
 
@@ -278,6 +279,8 @@ static void bnx2i_ring_sq_dbell(struct bnx2i_conn *bnx2i_conn, int count)
 		bnx2i_ring_577xx_doorbell(bnx2i_conn);
 	} else
 		writew(count, ep->qp.ctx_base + CNIC_SEND_DOORBELL);
+
+	mmiowb(); /* flush posted PCI writes */
 }
 
 

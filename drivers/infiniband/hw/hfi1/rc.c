@@ -140,7 +140,10 @@ static int make_rc_ack(struct hfi1_ibdev *dev, struct rvt_qp *qp,
 	case OP(RDMA_READ_RESPONSE_LAST):
 	case OP(RDMA_READ_RESPONSE_ONLY):
 		e = &qp->s_ack_queue[qp->s_tail_ack_queue];
-		release_rdma_sge_mr(e);
+		if (e->rdma_sge.mr) {
+			rvt_put_mr(e->rdma_sge.mr);
+			e->rdma_sge.mr = NULL;
+		}
 		/* FALLTHROUGH */
 	case OP(ATOMIC_ACKNOWLEDGE):
 		/*
@@ -340,8 +343,7 @@ write_resp:
 			break;
 
 		e->sent = 1;
-		/* Do not free e->rdma_sge until all data are received */
-		qp->s_ack_state = OP(ATOMIC_ACKNOWLEDGE);
+		qp->s_ack_state = OP(RDMA_READ_RESPONSE_LAST);
 		break;
 
 	case TID_OP(READ_RESP):
@@ -1432,7 +1434,7 @@ void hfi1_send_rc_ack(struct hfi1_packet *packet, bool is_fecn)
 	pbc = create_pbc(ppd, pbc_flags, qp->srate_mbps,
 			 sc_to_vlt(ppd->dd, sc5), plen);
 	pbuf = sc_buffer_alloc(rcd->sc, plen, NULL, NULL);
-	if (IS_ERR_OR_NULL(pbuf)) {
+	if (!pbuf) {
 		/*
 		 * We have no room to send at the moment.  Pass
 		 * responsibility for sending the ACK to the send engine
@@ -1701,36 +1703,6 @@ static void reset_sending_psn(struct rvt_qp *qp, u32 psn)
 	}
 }
 
-/**
- * hfi1_rc_verbs_aborted - handle abort status
- * @qp: the QP
- * @opah: the opa header
- *
- * This code modifies both ACK bit in BTH[2]
- * and the s_flags to go into send one mode.
- *
- * This serves to throttle the send engine to only
- * send a single packet in the likely case the
- * a link has gone down.
- */
-void hfi1_rc_verbs_aborted(struct rvt_qp *qp, struct hfi1_opa_header *opah)
-{
-	struct ib_other_headers *ohdr = hfi1_get_rc_ohdr(opah);
-	u8 opcode = ib_bth_get_opcode(ohdr);
-	u32 psn;
-
-	/* ignore responses */
-	if ((opcode >= OP(RDMA_READ_RESPONSE_FIRST) &&
-	     opcode <= OP(ATOMIC_ACKNOWLEDGE)) ||
-	    opcode == TID_OP(READ_RESP) ||
-	    opcode == TID_OP(WRITE_RESP))
-		return;
-
-	psn = ib_bth_get_psn(ohdr) | IB_BTH_REQ_ACK;
-	ohdr->bth[2] = cpu_to_be32(psn);
-	qp->s_flags |= RVT_S_SEND_ONE;
-}
-
 /*
  * This should be called with the QP s_lock held and interrupts disabled.
  */
@@ -1739,6 +1711,8 @@ void hfi1_rc_send_complete(struct rvt_qp *qp, struct hfi1_opa_header *opah)
 	struct ib_other_headers *ohdr;
 	struct hfi1_qp_priv *priv = qp->priv;
 	struct rvt_swqe *wqe;
+	struct ib_header *hdr = NULL;
+	struct hfi1_16b_header *hdr_16b = NULL;
 	u32 opcode, head, tail;
 	u32 psn;
 	struct tid_rdma_request *req;
@@ -1747,7 +1721,24 @@ void hfi1_rc_send_complete(struct rvt_qp *qp, struct hfi1_opa_header *opah)
 	if (!(ib_rvt_state_ops[qp->state] & RVT_SEND_OR_FLUSH_OR_RECV_OK))
 		return;
 
-	ohdr = hfi1_get_rc_ohdr(opah);
+	/* Find out where the BTH is */
+	if (priv->hdr_type == HFI1_PKT_TYPE_9B) {
+		hdr = &opah->ibh;
+		if (ib_get_lnh(hdr) == HFI1_LRH_BTH)
+			ohdr = &hdr->u.oth;
+		else
+			ohdr = &hdr->u.l.oth;
+	} else {
+		u8 l4;
+
+		hdr_16b = &opah->opah;
+		l4  = hfi1_16B_get_l4(hdr_16b);
+		if (l4 == OPA_16B_L4_IB_LOCAL)
+			ohdr = &hdr_16b->u.oth;
+		else
+			ohdr = &hdr_16b->u.l.oth;
+	}
+
 	opcode = ib_bth_get_opcode(ohdr);
 	if ((opcode >= OP(RDMA_READ_RESPONSE_FIRST) &&
 	     opcode <= OP(ATOMIC_ACKNOWLEDGE)) ||
@@ -1830,13 +1821,23 @@ void hfi1_rc_send_complete(struct rvt_qp *qp, struct hfi1_opa_header *opah)
 	}
 
 	while (qp->s_last != qp->s_acked) {
+		u32 s_last;
+
 		wqe = rvt_get_swqe_ptr(qp, qp->s_last);
 		if (cmp_psn(wqe->lpsn, qp->s_sending_psn) >= 0 &&
 		    cmp_psn(qp->s_sending_psn, qp->s_sending_hpsn) <= 0)
 			break;
 		trdma_clean_swqe(qp, wqe);
-		trace_hfi1_qp_send_completion(qp, wqe, qp->s_last);
-		rvt_qp_complete_swqe(qp,
+		rvt_qp_wqe_unreserve(qp, wqe);
+		s_last = qp->s_last;
+		trace_hfi1_qp_send_completion(qp, wqe, s_last);
+		if (++s_last >= qp->s_size)
+			s_last = 0;
+		qp->s_last = s_last;
+		/* see post_send() */
+		barrier();
+		rvt_put_swqe(wqe);
+		rvt_qp_swqe_complete(qp,
 				     wqe,
 				     ib_hfi1_wc_opcode[wqe->wr.opcode],
 				     IB_WC_SUCCESS);
@@ -1880,9 +1881,19 @@ struct rvt_swqe *do_rc_completion(struct rvt_qp *qp,
 	trace_hfi1_rc_completion(qp, wqe->lpsn);
 	if (cmp_psn(wqe->lpsn, qp->s_sending_psn) < 0 ||
 	    cmp_psn(qp->s_sending_psn, qp->s_sending_hpsn) > 0) {
+		u32 s_last;
+
 		trdma_clean_swqe(qp, wqe);
-		trace_hfi1_qp_send_completion(qp, wqe, qp->s_last);
-		rvt_qp_complete_swqe(qp,
+		rvt_put_swqe(wqe);
+		rvt_qp_wqe_unreserve(qp, wqe);
+		s_last = qp->s_last;
+		trace_hfi1_qp_send_completion(qp, wqe, s_last);
+		if (++s_last >= qp->s_size)
+			s_last = 0;
+		qp->s_last = s_last;
+		/* see post_send() */
+		barrier();
+		rvt_qp_swqe_complete(qp,
 				     wqe,
 				     ib_hfi1_wc_opcode[wqe->wr.opcode],
 				     IB_WC_SUCCESS);
@@ -2632,7 +2643,10 @@ static noinline int rc_rcv_error(struct ib_other_headers *ohdr, void *data,
 		len = be32_to_cpu(reth->length);
 		if (unlikely(offset + len != e->rdma_sge.sge_length))
 			goto unlock_done;
-		release_rdma_sge_mr(e);
+		if (e->rdma_sge.mr) {
+			rvt_put_mr(e->rdma_sge.mr);
+			e->rdma_sge.mr = NULL;
+		}
 		if (len != 0) {
 			u32 rkey = be32_to_cpu(reth->rkey);
 			u64 vaddr = get_ib_reth_vaddr(reth);
@@ -3006,7 +3020,8 @@ send_last:
 		wc.dlid_path_bits = 0;
 		wc.port_num = 0;
 		/* Signal completion event if the solicited bit is set. */
-		rvt_recv_cq(qp, &wc, ib_bth_is_solicited(ohdr));
+		rvt_cq_enter(ibcq_to_rvtcq(qp->ibqp.recv_cq), &wc,
+			     ib_bth_is_solicited(ohdr));
 		break;
 
 	case OP(RDMA_WRITE_ONLY):
@@ -3073,7 +3088,10 @@ send_last:
 			update_ack_queue(qp, next);
 		}
 		e = &qp->s_ack_queue[qp->r_head_ack_queue];
-		release_rdma_sge_mr(e);
+		if (e->rdma_sge.mr) {
+			rvt_put_mr(e->rdma_sge.mr);
+			e->rdma_sge.mr = NULL;
+		}
 		reth = &ohdr->u.rc.reth;
 		len = be32_to_cpu(reth->length);
 		if (len) {
@@ -3148,7 +3166,10 @@ send_last:
 			update_ack_queue(qp, next);
 		}
 		e = &qp->s_ack_queue[qp->r_head_ack_queue];
-		release_rdma_sge_mr(e);
+		if (e->rdma_sge.mr) {
+			rvt_put_mr(e->rdma_sge.mr);
+			e->rdma_sge.mr = NULL;
+		}
 		/* Process OPFN special virtual address */
 		if (opfn) {
 			opfn_conn_response(qp, e, ateth);

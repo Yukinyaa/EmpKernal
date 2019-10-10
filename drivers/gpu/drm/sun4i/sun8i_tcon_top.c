@@ -269,12 +269,12 @@ static int sun8i_tcon_top_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static const struct sun8i_tcon_top_quirks sun8i_r40_tcon_top_quirks = {
+const struct sun8i_tcon_top_quirks sun8i_r40_tcon_top_quirks = {
 	.has_tcon_tv1	= true,
 	.has_dsi	= true,
 };
 
-static const struct sun8i_tcon_top_quirks sun50i_h6_tcon_top_quirks = {
+const struct sun8i_tcon_top_quirks sun50i_h6_tcon_top_quirks = {
 	/* Nothing special */
 };
 

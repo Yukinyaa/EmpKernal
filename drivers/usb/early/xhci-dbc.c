@@ -533,6 +533,8 @@ static int xdbc_handle_external_reset(void)
 
 	xdbc_mem_init();
 
+	mmiowb();
+
 	ret = xdbc_start();
 	if (ret < 0)
 		goto reset_out;
@@ -584,6 +586,8 @@ static int __init xdbc_early_setup(void)
 		return ret;
 
 	xdbc_mem_init();
+
+	mmiowb();
 
 	ret = xdbc_start();
 	if (ret < 0) {

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* Event cache for netfilter. */
 
 /*
@@ -6,6 +5,10 @@
  * (C) 2005 Patrick McHardy <kaber@trash.net>
  * (C) 2005-2006 Netfilter Core Team <coreteam@netfilter.org>
  * (C) 2005 USAGI/WIDE Project <http://www.linux-ipv6.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt

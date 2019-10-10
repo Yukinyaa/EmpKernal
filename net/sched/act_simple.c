@@ -1,8 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * net/sched/act_simple.c	Simple example of an action
  *
+ *		This program is free software; you can redistribute it and/or
+ *		modify it under the terms of the GNU General Public License
+ *		as published by the Free Software Foundation; either version
+ *		2 of the License, or (at your option) any later version.
+ *
  * Authors:	Jamal Hadi Salim (2005-8)
+ *
  */
 
 #include <linux/module.h>
@@ -95,13 +100,11 @@ static int tcf_simp_init(struct net *net, struct nlattr *nla,
 	struct tcf_defact *d;
 	bool exists = false;
 	int ret = 0, err;
-	u32 index;
 
 	if (nla == NULL)
 		return -EINVAL;
 
-	err = nla_parse_nested_deprecated(tb, TCA_DEF_MAX, nla, simple_policy,
-					  NULL);
+	err = nla_parse_nested(tb, TCA_DEF_MAX, nla, simple_policy, NULL);
 	if (err < 0)
 		return err;
 
@@ -109,8 +112,7 @@ static int tcf_simp_init(struct net *net, struct nlattr *nla,
 		return -EINVAL;
 
 	parm = nla_data(tb[TCA_DEF_PARMS]);
-	index = parm->index;
-	err = tcf_idr_check_alloc(tn, &index, a, bind);
+	err = tcf_idr_check_alloc(tn, &parm->index, a, bind);
 	if (err < 0)
 		return err;
 	exists = err;
@@ -121,15 +123,15 @@ static int tcf_simp_init(struct net *net, struct nlattr *nla,
 		if (exists)
 			tcf_idr_release(*a, bind);
 		else
-			tcf_idr_cleanup(tn, index);
+			tcf_idr_cleanup(tn, parm->index);
 		return -EINVAL;
 	}
 
 	if (!exists) {
-		ret = tcf_idr_create(tn, index, est, a,
+		ret = tcf_idr_create(tn, parm->index, est, a,
 				     &act_simp_ops, bind, false);
 		if (ret) {
-			tcf_idr_cleanup(tn, index);
+			tcf_idr_cleanup(tn, parm->index);
 			return ret;
 		}
 
@@ -232,7 +234,7 @@ static __net_init int simp_init_net(struct net *net)
 {
 	struct tc_action_net *tn = net_generic(net, simp_net_id);
 
-	return tc_action_net_init(net, tn, &act_simp_ops);
+	return tc_action_net_init(tn, &act_simp_ops);
 }
 
 static void __net_exit simp_exit_net(struct list_head *net_list)

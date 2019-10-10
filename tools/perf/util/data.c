@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/compiler.h>
 #include <linux/kernel.h>
-#include <linux/zalloc.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <errno.h>
@@ -21,7 +20,7 @@ static void close_dir(struct perf_data_file *files, int nr)
 {
 	while (--nr >= 1) {
 		close(files[nr].fd);
-		zfree(&files[nr].path);
+		free(files[nr].path);
 	}
 	free(files);
 }

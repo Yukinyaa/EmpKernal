@@ -21,24 +21,29 @@ static int mt76x2u_start(struct ieee80211_hw *hw)
 	struct mt76x02_dev *dev = hw->priv;
 	int ret;
 
+	mutex_lock(&dev->mt76.mutex);
+
 	ret = mt76x2u_mac_start(dev);
 	if (ret)
-		return ret;
+		goto out;
 
-	ieee80211_queue_delayed_work(mt76_hw(dev), &dev->mt76.mac_work,
+	ieee80211_queue_delayed_work(mt76_hw(dev), &dev->mac_work,
 				     MT_MAC_WORK_INTERVAL);
 	set_bit(MT76_STATE_RUNNING, &dev->mt76.state);
 
-	return 0;
+out:
+	mutex_unlock(&dev->mt76.mutex);
+	return ret;
 }
 
 static void mt76x2u_stop(struct ieee80211_hw *hw)
 {
 	struct mt76x02_dev *dev = hw->priv;
 
+	mutex_lock(&dev->mt76.mutex);
 	clear_bit(MT76_STATE_RUNNING, &dev->mt76.state);
-	mt76u_stop_tx(&dev->mt76);
 	mt76x2u_stop_hw(dev);
+	mutex_unlock(&dev->mt76.mutex);
 }
 
 static int
@@ -48,9 +53,6 @@ mt76x2u_set_channel(struct mt76x02_dev *dev,
 	int err;
 
 	cancel_delayed_work_sync(&dev->cal_work);
-	dev->beacon_ops->pre_tbtt_enable(dev, false);
-
-	mutex_lock(&dev->mt76.mutex);
 	set_bit(MT76_RESET, &dev->mt76.state);
 
 	mt76_set_channel(&dev->mt76);
@@ -60,11 +62,9 @@ mt76x2u_set_channel(struct mt76x02_dev *dev,
 	err = mt76x2u_phy_set_channel(dev, chandef);
 
 	mt76x2_mac_resume(dev);
+	mt76x02_edcca_init(dev, true);
 
 	clear_bit(MT76_RESET, &dev->mt76.state);
-	mutex_unlock(&dev->mt76.mutex);
-
-	dev->beacon_ops->pre_tbtt_enable(dev, true);
 	mt76_txq_schedule_all(&dev->mt76);
 
 	return err;
@@ -86,6 +86,12 @@ mt76x2u_config(struct ieee80211_hw *hw, u32 changed)
 		mt76_wr(dev, MT_RX_FILTR_CFG, dev->mt76.rxfilter);
 	}
 
+	if (changed & IEEE80211_CONF_CHANGE_CHANNEL) {
+		ieee80211_stop_queues(hw);
+		err = mt76x2u_set_channel(dev, &hw->conf.chandef);
+		ieee80211_wake_queues(hw);
+	}
+
 	if (changed & IEEE80211_CONF_CHANGE_POWER) {
 		dev->mt76.txpower_conf = hw->conf.power_level * 2;
 
@@ -97,12 +103,6 @@ mt76x2u_config(struct ieee80211_hw *hw, u32 changed)
 	}
 
 	mutex_unlock(&dev->mt76.mutex);
-
-	if (changed & IEEE80211_CONF_CHANGE_CHANNEL) {
-		ieee80211_stop_queues(hw);
-		err = mt76x2u_set_channel(dev, &hw->conf.chandef);
-		ieee80211_wake_queues(hw);
-	}
 
 	return err;
 }
@@ -125,6 +125,4 @@ const struct ieee80211_ops mt76x2u_ops = {
 	.sw_scan_complete = mt76x02_sw_scan_complete,
 	.sta_rate_tbl_update = mt76x02_sta_rate_tbl_update,
 	.get_txpower = mt76_get_txpower,
-	.set_tim = mt76_set_tim,
-	.release_buffered_frames = mt76_release_buffered_frames,
 };

@@ -7,7 +7,6 @@
 #include <linux/spi/spi.h>
 
 #include "wilc_wfi_netdevice.h"
-#include "wilc_wfi_cfgoperations.h"
 
 struct wilc_spi {
 	int crc_off;
@@ -121,7 +120,7 @@ static int wilc_bus_probe(struct spi_device *spi)
 			dev_err(&spi->dev, "failed to get the irq gpio\n");
 	}
 
-	ret = wilc_cfg80211_init(&wilc, &spi->dev, WILC_HIF_SPI, &wilc_hif_spi);
+	ret = wilc_netdev_init(&wilc, NULL, WILC_HIF_SPI, &wilc_hif_spi);
 	if (ret) {
 		kfree(spi_priv);
 		return ret;
@@ -934,9 +933,11 @@ static int wilc_spi_read_int(struct wilc *wilc, u32 *int_status)
 	u32 irq_flags;
 	int k = IRG_FLAGS_OFFSET + 5;
 
-	if (spi_priv->has_thrpt_enh)
-		return spi_internal_read(wilc, 0xe840 - WILC_SPI_REG_BASE,
-					 int_status);
+	if (spi_priv->has_thrpt_enh) {
+		ret = spi_internal_read(wilc, 0xe840 - WILC_SPI_REG_BASE,
+					int_status);
+		return ret;
+	}
 	ret = wilc_spi_read_reg(wilc, WILC_VMM_TO_HOST_SIZE, &byte_cnt);
 	if (!ret) {
 		dev_err(&spi->dev,
@@ -981,8 +982,9 @@ static int wilc_spi_clear_int_ext(struct wilc *wilc, u32 val)
 	u32 tbl_ctl;
 
 	if (spi_priv->has_thrpt_enh) {
-		return spi_internal_write(wilc, 0xe844 - WILC_SPI_REG_BASE,
-					  val);
+		ret = spi_internal_write(wilc, 0xe844 - WILC_SPI_REG_BASE,
+					 val);
+		return ret;
 	}
 
 	flags = val & (BIT(MAX_NUM_INT) - 1);

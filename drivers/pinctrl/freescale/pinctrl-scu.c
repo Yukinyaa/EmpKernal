@@ -35,7 +35,7 @@ struct imx_sc_msg_resp_pad_get {
 	u32 val;
 } __packed;
 
-static struct imx_sc_ipc *pinctrl_ipc_handle;
+struct imx_sc_ipc *pinctrl_ipc_handle;
 
 int imx_pinctrl_sc_ipc_init(struct platform_device *pdev)
 {

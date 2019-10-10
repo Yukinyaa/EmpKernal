@@ -1,8 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  linux/drivers/mmc/sdio.c
  *
  *  Copyright 2006-2007 Pierre Ossman
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or (at
+ * your option) any later version.
  */
 
 #include <linux/err.h>
@@ -559,7 +563,7 @@ static void mmc_sdio_resend_if_cond(struct mmc_host *host,
  * we're trying to reinitialise.
  */
 static int mmc_sdio_init_card(struct mmc_host *host, u32 ocr,
-			      struct mmc_card *oldcard)
+			      struct mmc_card *oldcard, int powered_resume)
 {
 	struct mmc_card *card;
 	int err;
@@ -582,9 +586,11 @@ try_again:
 	/*
 	 * Inform the card of the voltage
 	 */
-	err = mmc_send_io_op_cond(host, ocr, &rocr);
-	if (err)
-		goto err;
+	if (!powered_resume) {
+		err = mmc_send_io_op_cond(host, ocr, &rocr);
+		if (err)
+			goto err;
+	}
 
 	/*
 	 * For SPI, enable CRC as appropriate.
@@ -643,7 +649,7 @@ try_again:
 	 * try to init uhs card. sdio_read_cccr will take over this task
 	 * to make sure which speed mode should work.
 	 */
-	if (rocr & ocr & R4_18V_PRESENT) {
+	if (!powered_resume && (rocr & ocr & R4_18V_PRESENT)) {
 		err = mmc_set_uhs_voltage(host, ocr_card);
 		if (err == -EAGAIN) {
 			mmc_sdio_resend_if_cond(host, card);
@@ -657,7 +663,7 @@ try_again:
 	/*
 	 * For native busses:  set card RCA and quit open drain mode.
 	 */
-	if (!mmc_host_is_spi(host)) {
+	if (!powered_resume && !mmc_host_is_spi(host)) {
 		err = mmc_send_relative_addr(host, &card->rca);
 		if (err)
 			goto remove;
@@ -685,7 +691,7 @@ try_again:
 	/*
 	 * Select card, as all following commands rely on that.
 	 */
-	if (!mmc_host_is_spi(host)) {
+	if (!powered_resume && !mmc_host_is_spi(host)) {
 		err = mmc_select_card(card);
 		if (err)
 			goto remove;
@@ -814,26 +820,9 @@ err:
 	return err;
 }
 
-static int mmc_sdio_reinit_card(struct mmc_host *host)
+static int mmc_sdio_reinit_card(struct mmc_host *host, bool powered_resume)
 {
 	int ret;
-
-	/*
-	 * Reset the card by performing the same steps that are taken by
-	 * mmc_rescan_try_freq() and mmc_attach_sdio() during a "normal" probe.
-	 *
-	 * sdio_reset() is technically not needed. Having just powered up the
-	 * hardware, it should already be in reset state. However, some
-	 * platforms (such as SD8686 on OLPC) do not instantly cut power,
-	 * meaning that a reset is required when restoring power soon after
-	 * powering off. It is harmless in other cases.
-	 *
-	 * The CMD5 reset (mmc_send_io_op_cond()), according to the SDIO spec,
-	 * is not necessary for non-removable cards. However, it is required
-	 * for OLPC SD8686 (which expects a [CMD5,5,3,7] init sequence), and
-	 * harmless in other situations.
-	 *
-	 */
 
 	sdio_reset(host);
 	mmc_go_idle(host);
@@ -843,7 +832,8 @@ static int mmc_sdio_reinit_card(struct mmc_host *host)
 	if (ret)
 		return ret;
 
-	return mmc_sdio_init_card(host, host->card->ocr, host->card);
+	return mmc_sdio_init_card(host, host->card->ocr, host->card,
+				  powered_resume);
 }
 
 /*
@@ -951,10 +941,6 @@ static int mmc_sdio_pre_suspend(struct mmc_host *host)
  */
 static int mmc_sdio_suspend(struct mmc_host *host)
 {
-	/* Prevent processing of SDIO IRQs in suspended state. */
-	mmc_card_set_suspended(host->card);
-	cancel_delayed_work_sync(&host->sdio_irq_work);
-
 	mmc_claim_host(host);
 
 	if (mmc_card_keep_power(host) && mmc_card_wake_sdio_irq(host))
@@ -979,11 +965,7 @@ static int mmc_sdio_resume(struct mmc_host *host)
 	/* Basic card reinitialization. */
 	mmc_claim_host(host);
 
-	/*
-	 * Restore power and reinitialize the card when needed. Note that a
-	 * removable card is checked from a detect work later on in the resume
-	 * process.
-	 */
+	/* Restore power if needed */
 	if (!mmc_card_keep_power(host)) {
 		mmc_power_up(host, host->card->ocr);
 		/*
@@ -997,30 +979,59 @@ static int mmc_sdio_resume(struct mmc_host *host)
 			pm_runtime_set_active(&host->card->dev);
 			pm_runtime_enable(&host->card->dev);
 		}
-		err = mmc_sdio_reinit_card(host);
-	} else if (mmc_card_wake_sdio_irq(host)) {
+	}
+
+	/* No need to reinitialize powered-resumed nonremovable cards */
+	if (mmc_card_is_removable(host) || !mmc_card_keep_power(host)) {
+		err = mmc_sdio_reinit_card(host, mmc_card_keep_power(host));
+	} else if (mmc_card_keep_power(host) && mmc_card_wake_sdio_irq(host)) {
 		/* We may have switched to 1-bit mode during suspend */
 		err = sdio_enable_4bit_bus(host->card);
 	}
 
-	if (err)
-		goto out;
-
-	/* Allow SDIO IRQs to be processed again. */
-	mmc_card_clr_suspended(host->card);
-
-	if (host->sdio_irqs) {
+	if (!err && host->sdio_irqs) {
 		if (!(host->caps2 & MMC_CAP2_SDIO_IRQ_NOTHREAD))
 			wake_up_process(host->sdio_irq_thread);
 		else if (host->caps & MMC_CAP_SDIO_IRQ)
 			host->ops->enable_sdio_irq(host, 1);
 	}
 
-out:
 	mmc_release_host(host);
 
 	host->pm_flags &= ~MMC_PM_KEEP_POWER;
 	return err;
+}
+
+static int mmc_sdio_power_restore(struct mmc_host *host)
+{
+	int ret;
+
+	/*
+	 * Reset the card by performing the same steps that are taken by
+	 * mmc_rescan_try_freq() and mmc_attach_sdio() during a "normal" probe.
+	 *
+	 * sdio_reset() is technically not needed. Having just powered up the
+	 * hardware, it should already be in reset state. However, some
+	 * platforms (such as SD8686 on OLPC) do not instantly cut power,
+	 * meaning that a reset is required when restoring power soon after
+	 * powering off. It is harmless in other cases.
+	 *
+	 * The CMD5 reset (mmc_send_io_op_cond()), according to the SDIO spec,
+	 * is not necessary for non-removable cards. However, it is required
+	 * for OLPC SD8686 (which expects a [CMD5,5,3,7] init sequence), and
+	 * harmless in other situations.
+	 *
+	 */
+
+	mmc_claim_host(host);
+
+	ret = mmc_sdio_reinit_card(host, mmc_card_keep_power(host));
+	if (!ret && host->sdio_irqs)
+		mmc_signal_sdio_irq(host);
+
+	mmc_release_host(host);
+
+	return ret;
 }
 
 static int mmc_sdio_runtime_suspend(struct mmc_host *host)
@@ -1040,7 +1051,7 @@ static int mmc_sdio_runtime_resume(struct mmc_host *host)
 	/* Restore power and re-initialize. */
 	mmc_claim_host(host);
 	mmc_power_up(host, host->card->ocr);
-	ret = mmc_sdio_reinit_card(host);
+	ret = mmc_sdio_power_restore(host);
 	mmc_release_host(host);
 
 	return ret;
@@ -1049,7 +1060,7 @@ static int mmc_sdio_runtime_resume(struct mmc_host *host)
 static int mmc_sdio_hw_reset(struct mmc_host *host)
 {
 	mmc_power_cycle(host, host->card->ocr);
-	return mmc_sdio_reinit_card(host);
+	return mmc_sdio_power_restore(host);
 }
 
 static int mmc_sdio_sw_reset(struct mmc_host *host)
@@ -1061,7 +1072,7 @@ static int mmc_sdio_sw_reset(struct mmc_host *host)
 	mmc_set_initial_state(host);
 	mmc_set_initial_signal_voltage(host);
 
-	return mmc_sdio_reinit_card(host);
+	return mmc_sdio_reinit_card(host, 0);
 }
 
 static const struct mmc_bus_ops mmc_sdio_ops = {
@@ -1111,7 +1122,7 @@ int mmc_attach_sdio(struct mmc_host *host)
 	/*
 	 * Detect and init the card.
 	 */
-	err = mmc_sdio_init_card(host, rocr, NULL);
+	err = mmc_sdio_init_card(host, rocr, NULL, 0);
 	if (err)
 		goto err;
 

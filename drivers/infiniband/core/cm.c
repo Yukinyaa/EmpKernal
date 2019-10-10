@@ -52,7 +52,6 @@
 #include <rdma/ib_cache.h>
 #include <rdma/ib_cm.h>
 #include "cm_msgs.h"
-#include "core_priv.h"
 
 MODULE_AUTHOR("Sean Hefty");
 MODULE_DESCRIPTION("InfiniBand CM");
@@ -125,8 +124,7 @@ static struct ib_cm {
 	struct rb_root remote_qp_table;
 	struct rb_root remote_id_table;
 	struct rb_root remote_sidr_table;
-	struct xarray local_id_table;
-	u32 local_id_next;
+	struct idr local_id_table;
 	__be32 random_id_operand;
 	struct list_head timewait_list;
 	struct workqueue_struct *wq;
@@ -221,6 +219,7 @@ struct cm_port {
 struct cm_device {
 	struct list_head list;
 	struct ib_device *ib_device;
+	struct device *device;
 	u8 ack_delay;
 	int going_down;
 	struct cm_port *port[0];
@@ -599,31 +598,35 @@ static int cm_init_av_by_path(struct sa_path_rec *path,
 
 static int cm_alloc_id(struct cm_id_private *cm_id_priv)
 {
-	int err;
-	u32 id;
+	unsigned long flags;
+	int id;
 
-	err = xa_alloc_cyclic_irq(&cm.local_id_table, &id, cm_id_priv,
-			xa_limit_32b, &cm.local_id_next, GFP_KERNEL);
+	idr_preload(GFP_KERNEL);
+	spin_lock_irqsave(&cm.lock, flags);
+
+	id = idr_alloc_cyclic(&cm.local_id_table, cm_id_priv, 0, 0, GFP_NOWAIT);
+
+	spin_unlock_irqrestore(&cm.lock, flags);
+	idr_preload_end();
 
 	cm_id_priv->id.local_id = (__force __be32)id ^ cm.random_id_operand;
-	return err;
-}
-
-static u32 cm_local_id(__be32 local_id)
-{
-	return (__force u32) (local_id ^ cm.random_id_operand);
+	return id < 0 ? id : 0;
 }
 
 static void cm_free_id(__be32 local_id)
 {
-	xa_erase_irq(&cm.local_id_table, cm_local_id(local_id));
+	spin_lock_irq(&cm.lock);
+	idr_remove(&cm.local_id_table,
+		   (__force int) (local_id ^ cm.random_id_operand));
+	spin_unlock_irq(&cm.lock);
 }
 
 static struct cm_id_private * cm_get_id(__be32 local_id, __be32 remote_id)
 {
 	struct cm_id_private *cm_id_priv;
 
-	cm_id_priv = xa_load(&cm.local_id_table, cm_local_id(local_id));
+	cm_id_priv = idr_find(&cm.local_id_table,
+			      (__force int) (local_id ^ cm.random_id_operand));
 	if (cm_id_priv) {
 		if (cm_id_priv->id.remote_id == remote_id)
 			atomic_inc(&cm_id_priv->refcount);
@@ -1985,12 +1988,11 @@ static int cm_req_handler(struct cm_work *work)
 	grh = rdma_ah_read_grh(&cm_id_priv->av.ah_attr);
 	gid_attr = grh->sgid_attr;
 
-	if (gid_attr &&
-	    rdma_protocol_roce(work->port->cm_dev->ib_device,
-			       work->port->port_num)) {
+	if (gid_attr && gid_attr->ndev) {
 		work->path[0].rec_type =
 			sa_conv_gid_to_pathrec_type(gid_attr->gid_type);
 	} else {
+		/* If no GID attribute or ndev is null, it is not RoCE. */
 		cm_path_set_rec_type(work->port->cm_dev->ib_device,
 				     work->port->port_num,
 				     &work->path[0],
@@ -2822,8 +2824,9 @@ static struct cm_id_private * cm_acquire_rejected_id(struct cm_rej_msg *rej_msg)
 			spin_unlock_irq(&cm.lock);
 			return NULL;
 		}
-		cm_id_priv = xa_load(&cm.local_id_table,
-				cm_local_id(timewait_info->work.local_id));
+		cm_id_priv = idr_find(&cm.local_id_table, (__force int)
+				      (timewait_info->work.local_id ^
+				       cm.random_id_operand));
 		if (cm_id_priv) {
 			if (cm_id_priv->id.remote_id == remote_id)
 				atomic_inc(&cm_id_priv->refcount);
@@ -4273,6 +4276,18 @@ static struct kobj_type cm_counter_obj_type = {
 	.default_attrs = cm_counter_default_attrs
 };
 
+static void cm_release_port_obj(struct kobject *obj)
+{
+	struct cm_port *cm_port;
+
+	cm_port = container_of(obj, struct cm_port, port_obj);
+	kfree(cm_port);
+}
+
+static struct kobj_type cm_port_obj_type = {
+	.release = cm_release_port_obj
+};
+
 static char *cm_devnode(struct device *dev, umode_t *mode)
 {
 	if (mode)
@@ -4291,12 +4306,19 @@ static int cm_create_port_fs(struct cm_port *port)
 {
 	int i, ret;
 
+	ret = kobject_init_and_add(&port->port_obj, &cm_port_obj_type,
+				   &port->cm_dev->device->kobj,
+				   "%d", port->port_num);
+	if (ret) {
+		kfree(port);
+		return ret;
+	}
+
 	for (i = 0; i < CM_COUNTER_GROUPS; i++) {
-		ret = ib_port_register_module_stat(port->cm_dev->ib_device,
-						   port->port_num,
-						   &port->counter_group[i].obj,
-						   &cm_counter_obj_type,
-						   counter_group_names[i]);
+		ret = kobject_init_and_add(&port->counter_group[i].obj,
+					   &cm_counter_obj_type,
+					   &port->port_obj,
+					   "%s", counter_group_names[i]);
 		if (ret)
 			goto error;
 	}
@@ -4305,7 +4327,8 @@ static int cm_create_port_fs(struct cm_port *port)
 
 error:
 	while (i--)
-		ib_port_unregister_module_stat(&port->counter_group[i].obj);
+		kobject_put(&port->counter_group[i].obj);
+	kobject_put(&port->port_obj);
 	return ret;
 
 }
@@ -4315,8 +4338,9 @@ static void cm_remove_port_fs(struct cm_port *port)
 	int i;
 
 	for (i = 0; i < CM_COUNTER_GROUPS; i++)
-		ib_port_unregister_module_stat(&port->counter_group[i].obj);
+		kobject_put(&port->counter_group[i].obj);
 
+	kobject_put(&port->port_obj);
 }
 
 static void cm_add_one(struct ib_device *ib_device)
@@ -4343,6 +4367,13 @@ static void cm_add_one(struct ib_device *ib_device)
 	cm_dev->ib_device = ib_device;
 	cm_dev->ack_delay = ib_device->attrs.local_ca_ack_delay;
 	cm_dev->going_down = 0;
+	cm_dev->device = device_create(&cm_class, &ib_device->dev,
+				       MKDEV(0, 0), NULL,
+				       "%s", dev_name(&ib_device->dev));
+	if (IS_ERR(cm_dev->device)) {
+		kfree(cm_dev);
+		return;
+	}
 
 	set_bit(IB_MGMT_METHOD_SEND, reg_req.method_mask);
 	for (i = 1; i <= ib_device->phys_port_cnt; i++) {
@@ -4409,6 +4440,7 @@ error1:
 		cm_remove_port_fs(port);
 	}
 free:
+	device_unregister(cm_dev->device);
 	kfree(cm_dev);
 }
 
@@ -4462,6 +4494,7 @@ static void cm_remove_one(struct ib_device *ib_device, void *client_data)
 		cm_remove_port_fs(port);
 	}
 
+	device_unregister(cm_dev->device);
 	kfree(cm_dev);
 }
 
@@ -4469,6 +4502,7 @@ static int __init ib_cm_init(void)
 {
 	int ret;
 
+	memset(&cm, 0, sizeof cm);
 	INIT_LIST_HEAD(&cm.device_list);
 	rwlock_init(&cm.device_lock);
 	spin_lock_init(&cm.lock);
@@ -4478,7 +4512,7 @@ static int __init ib_cm_init(void)
 	cm.remote_id_table = RB_ROOT;
 	cm.remote_qp_table = RB_ROOT;
 	cm.remote_sidr_table = RB_ROOT;
-	xa_init_flags(&cm.local_id_table, XA_FLAGS_ALLOC | XA_FLAGS_LOCK_IRQ);
+	idr_init(&cm.local_id_table);
 	get_random_bytes(&cm.random_id_operand, sizeof cm.random_id_operand);
 	INIT_LIST_HEAD(&cm.timewait_list);
 
@@ -4504,6 +4538,7 @@ error3:
 error2:
 	class_unregister(&cm_class);
 error1:
+	idr_destroy(&cm.local_id_table);
 	return ret;
 }
 
@@ -4525,8 +4560,9 @@ static void __exit ib_cm_cleanup(void)
 	}
 
 	class_unregister(&cm_class);
-	WARN_ON(!xa_empty(&cm.local_id_table));
+	idr_destroy(&cm.local_id_table);
 }
 
 module_init(ib_cm_init);
 module_exit(ib_cm_cleanup);
+

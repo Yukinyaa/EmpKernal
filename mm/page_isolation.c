@@ -151,6 +151,8 @@ __first_valid_page(unsigned long pfn, unsigned long nr_pages)
 	for (i = 0; i < nr_pages; i++) {
 		struct page *page;
 
+		if (!pfn_valid_within(pfn + i))
+			continue;
 		page = pfn_to_online_page(pfn + i);
 		if (!page)
 			continue;
@@ -230,7 +232,7 @@ undo:
 /*
  * Make isolated pages available again.
  */
-void undo_isolate_page_range(unsigned long start_pfn, unsigned long end_pfn,
+int undo_isolate_page_range(unsigned long start_pfn, unsigned long end_pfn,
 			    unsigned migratetype)
 {
 	unsigned long pfn;
@@ -247,6 +249,7 @@ void undo_isolate_page_range(unsigned long start_pfn, unsigned long end_pfn,
 			continue;
 		unset_migratetype_isolate(page, migratetype);
 	}
+	return 0;
 }
 /*
  * Test all pages in the range is free(means isolated) or not.

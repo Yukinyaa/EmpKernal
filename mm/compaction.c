@@ -842,15 +842,13 @@ isolate_migratepages_block(struct compact_control *cc, unsigned long low_pfn,
 
 		/*
 		 * Periodically drop the lock (if held) regardless of its
-		 * contention, to give chance to IRQs. Abort completely if
-		 * a fatal signal is pending.
+		 * contention, to give chance to IRQs. Abort async compaction
+		 * if contended.
 		 */
 		if (!(low_pfn % SWAP_CLUSTER_MAX)
 		    && compact_unlock_should_abort(&pgdat->lru_lock,
-					    flags, &locked, cc)) {
-			low_pfn = 0;
-			goto fatal_pending;
-		}
+					    flags, &locked, cc))
+			break;
 
 		if (!pfn_valid_within(low_pfn))
 			goto isolate_fail;
@@ -1062,7 +1060,6 @@ isolate_abort:
 	trace_mm_compaction_isolate_migratepages(start_pfn, low_pfn,
 						nr_scanned, nr_isolated);
 
-fatal_pending:
 	cc->total_migrate_scanned += nr_scanned;
 	if (nr_isolated)
 		count_compact_events(COMPACTISOLATED, nr_isolated);
@@ -1167,9 +1164,7 @@ static bool suitable_migration_target(struct compact_control *cc,
 static inline unsigned int
 freelist_scan_limit(struct compact_control *cc)
 {
-	unsigned short shift = BITS_PER_LONG - 1;
-
-	return (COMPACT_CLUSTER_MAX >> min(shift, cc->fast_search_fail)) + 1;
+	return (COMPACT_CLUSTER_MAX >> cc->fast_search_fail) + 1;
 }
 
 /*
@@ -1402,7 +1397,7 @@ fast_isolate_freepages(struct compact_control *cc)
 				page = pfn_to_page(highest);
 				cc->free_pfn = highest;
 			} else {
-				if (cc->direct_compaction && pfn_valid(min_pfn)) {
+				if (cc->direct_compaction) {
 					page = pfn_to_page(min_pfn);
 					cc->free_pfn = min_pfn;
 				}
@@ -1891,13 +1886,13 @@ static enum compact_result __compact_finished(struct compact_control *cc)
 		bool can_steal;
 
 		/* Job done if page is free of the right migratetype */
-		if (!free_area_empty(area, migratetype))
+		if (!list_empty(&area->free_list[migratetype]))
 			return COMPACT_SUCCESS;
 
 #ifdef CONFIG_CMA
 		/* MIGRATE_MOVABLE can fallback on MIGRATE_CMA */
 		if (migratetype == MIGRATE_MOVABLE &&
-			!free_area_empty(area, MIGRATE_CMA))
+			!list_empty(&area->free_list[MIGRATE_CMA]))
 			return COMPACT_SUCCESS;
 #endif
 		/*

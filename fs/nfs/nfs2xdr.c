@@ -76,20 +76,6 @@ static int nfs_stat_to_errno(enum nfs_stat);
  * or decoded inline.
  */
 
-static struct user_namespace *rpc_userns(const struct rpc_clnt *clnt)
-{
-	if (clnt && clnt->cl_cred)
-		return clnt->cl_cred->user_ns;
-	return &init_user_ns;
-}
-
-static struct user_namespace *rpc_rqst_userns(const struct rpc_rqst *rqstp)
-{
-	if (rqstp->rq_task)
-		return rpc_userns(rqstp->rq_task->tk_client);
-	return &init_user_ns;
-}
-
 /*
  *	typedef opaque	nfsdata<>;
  */
@@ -151,7 +137,7 @@ static int decode_stat(struct xdr_stream *xdr, enum nfs_stat *status)
 	return 0;
 out_status:
 	*status = be32_to_cpup(p);
-	trace_nfs_xdr_status(xdr, (int)*status);
+	trace_nfs_xdr_status((int)*status);
 	return 0;
 }
 
@@ -262,8 +248,7 @@ static __be32 *xdr_decode_time(__be32 *p, struct timespec *timep)
  *	};
  *
  */
-static int decode_fattr(struct xdr_stream *xdr, struct nfs_fattr *fattr,
-		struct user_namespace *userns)
+static int decode_fattr(struct xdr_stream *xdr, struct nfs_fattr *fattr)
 {
 	u32 rdev, type;
 	__be32 *p;
@@ -278,10 +263,10 @@ static int decode_fattr(struct xdr_stream *xdr, struct nfs_fattr *fattr,
 
 	fattr->mode = be32_to_cpup(p++);
 	fattr->nlink = be32_to_cpup(p++);
-	fattr->uid = make_kuid(userns, be32_to_cpup(p++));
+	fattr->uid = make_kuid(&init_user_ns, be32_to_cpup(p++));
 	if (!uid_valid(fattr->uid))
 		goto out_uid;
-	fattr->gid = make_kgid(userns, be32_to_cpup(p++));
+	fattr->gid = make_kgid(&init_user_ns, be32_to_cpup(p++));
 	if (!gid_valid(fattr->gid))
 		goto out_gid;
 		
@@ -336,8 +321,7 @@ static __be32 *xdr_time_not_set(__be32 *p)
 	return p;
 }
 
-static void encode_sattr(struct xdr_stream *xdr, const struct iattr *attr,
-		struct user_namespace *userns)
+static void encode_sattr(struct xdr_stream *xdr, const struct iattr *attr)
 {
 	struct timespec ts;
 	__be32 *p;
@@ -349,11 +333,11 @@ static void encode_sattr(struct xdr_stream *xdr, const struct iattr *attr,
 	else
 		*p++ = cpu_to_be32(NFS2_SATTR_NOT_SET);
 	if (attr->ia_valid & ATTR_UID)
-		*p++ = cpu_to_be32(from_kuid_munged(userns, attr->ia_uid));
+		*p++ = cpu_to_be32(from_kuid(&init_user_ns, attr->ia_uid));
 	else
 		*p++ = cpu_to_be32(NFS2_SATTR_NOT_SET);
 	if (attr->ia_valid & ATTR_GID)
-		*p++ = cpu_to_be32(from_kgid_munged(userns, attr->ia_gid));
+		*p++ = cpu_to_be32(from_kgid(&init_user_ns, attr->ia_gid));
 	else
 		*p++ = cpu_to_be32(NFS2_SATTR_NOT_SET);
 	if (attr->ia_valid & ATTR_SIZE)
@@ -467,8 +451,7 @@ out_cheating:
  *	};
  */
 static int decode_attrstat(struct xdr_stream *xdr, struct nfs_fattr *result,
-			   __u32 *op_status,
-			   struct user_namespace *userns)
+			   __u32 *op_status)
 {
 	enum nfs_stat status;
 	int error;
@@ -480,7 +463,7 @@ static int decode_attrstat(struct xdr_stream *xdr, struct nfs_fattr *result,
 		*op_status = status;
 	if (status != NFS_OK)
 		goto out_default;
-	error = decode_fattr(xdr, result, userns);
+	error = decode_fattr(xdr, result);
 out:
 	return error;
 out_default:
@@ -515,21 +498,19 @@ static void encode_diropargs(struct xdr_stream *xdr, const struct nfs_fh *fh,
  *		void;
  *	};
  */
-static int decode_diropok(struct xdr_stream *xdr, struct nfs_diropok *result,
-		struct user_namespace *userns)
+static int decode_diropok(struct xdr_stream *xdr, struct nfs_diropok *result)
 {
 	int error;
 
 	error = decode_fhandle(xdr, result->fh);
 	if (unlikely(error))
 		goto out;
-	error = decode_fattr(xdr, result->fattr, userns);
+	error = decode_fattr(xdr, result->fattr);
 out:
 	return error;
 }
 
-static int decode_diropres(struct xdr_stream *xdr, struct nfs_diropok *result,
-		struct user_namespace *userns)
+static int decode_diropres(struct xdr_stream *xdr, struct nfs_diropok *result)
 {
 	enum nfs_stat status;
 	int error;
@@ -539,7 +520,7 @@ static int decode_diropres(struct xdr_stream *xdr, struct nfs_diropok *result,
 		goto out;
 	if (status != NFS_OK)
 		goto out_default;
-	error = decode_diropok(xdr, result, userns);
+	error = decode_diropok(xdr, result);
 out:
 	return error;
 out_default:
@@ -578,7 +559,7 @@ static void nfs2_xdr_enc_sattrargs(struct rpc_rqst *req,
 	const struct nfs_sattrargs *args = data;
 
 	encode_fhandle(xdr, args->fh);
-	encode_sattr(xdr, args->sattr, rpc_rqst_userns(req));
+	encode_sattr(xdr, args->sattr);
 }
 
 static void nfs2_xdr_enc_diropargs(struct rpc_rqst *req,
@@ -693,7 +674,7 @@ static void nfs2_xdr_enc_createargs(struct rpc_rqst *req,
 	const struct nfs_createargs *args = data;
 
 	encode_diropargs(xdr, args->fh, args->name, args->len);
-	encode_sattr(xdr, args->sattr, rpc_rqst_userns(req));
+	encode_sattr(xdr, args->sattr);
 }
 
 static void nfs2_xdr_enc_removeargs(struct rpc_rqst *req,
@@ -760,7 +741,7 @@ static void nfs2_xdr_enc_symlinkargs(struct rpc_rqst *req,
 
 	encode_diropargs(xdr, args->fromfh, args->fromname, args->fromlen);
 	encode_path(xdr, args->pages, args->pathlen);
-	encode_sattr(xdr, args->sattr, rpc_rqst_userns(req));
+	encode_sattr(xdr, args->sattr);
 }
 
 /*
@@ -822,13 +803,13 @@ out_default:
 static int nfs2_xdr_dec_attrstat(struct rpc_rqst *req, struct xdr_stream *xdr,
 				 void *result)
 {
-	return decode_attrstat(xdr, result, NULL, rpc_rqst_userns(req));
+	return decode_attrstat(xdr, result, NULL);
 }
 
 static int nfs2_xdr_dec_diropres(struct rpc_rqst *req, struct xdr_stream *xdr,
 				 void *result)
 {
-	return decode_diropres(xdr, result, rpc_rqst_userns(req));
+	return decode_diropres(xdr, result);
 }
 
 /*
@@ -883,7 +864,7 @@ static int nfs2_xdr_dec_readres(struct rpc_rqst *req, struct xdr_stream *xdr,
 	result->op_status = status;
 	if (status != NFS_OK)
 		goto out_default;
-	error = decode_fattr(xdr, result->fattr, rpc_rqst_userns(req));
+	error = decode_fattr(xdr, result->fattr);
 	if (unlikely(error))
 		goto out;
 	error = decode_nfsdata(xdr, result);
@@ -900,8 +881,7 @@ static int nfs2_xdr_dec_writeres(struct rpc_rqst *req, struct xdr_stream *xdr,
 
 	/* All NFSv2 writes are "file sync" writes */
 	result->verf->committed = NFS_FILE_SYNC;
-	return decode_attrstat(xdr, result->fattr, &result->op_status,
-			rpc_rqst_userns(req));
+	return decode_attrstat(xdr, result->fattr, &result->op_status);
 }
 
 /**

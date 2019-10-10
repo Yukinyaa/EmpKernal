@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * ACPI AML interfacing support
  *
  * Copyright (C) 2015, Intel Corporation
  * Authors: Lv Zheng <lv.zheng@intel.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 /* #define DEBUG */
@@ -387,7 +390,7 @@ again:
 	return size > 0 ? size : ret;
 }
 
-static int acpi_aml_thread(void *unused)
+static int acpi_aml_thread(void *unsed)
 {
 	acpi_osd_exec_callback function = NULL;
 	void *context;

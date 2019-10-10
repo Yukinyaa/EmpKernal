@@ -1,7 +1,5 @@
 cpustat
 fds_example
-hbm
-ibumad
 lathist
 lwt_len_hist
 map_perf_test
@@ -46,6 +44,5 @@ xdp_redirect_cpu
 xdp_redirect_map
 xdp_router_ipv4
 xdp_rxq_info
-xdp_sample_pkts
 xdp_tx_iptunnel
 xdpsock

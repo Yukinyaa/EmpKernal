@@ -77,7 +77,7 @@ struct nvme_rdma_cm_rep {
  * struct nvme_rdma_cm_rej - rdma connect reject
  *
  * @recfmt:        format of the RDMA Private Data
- * @sts:           error status for the associated connect request
+ * @fsts:          error status for the associated connect request
  */
 struct nvme_rdma_cm_rej {
 	__le16		recfmt;

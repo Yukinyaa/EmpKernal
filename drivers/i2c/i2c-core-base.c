@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Linux I2C core
  *
@@ -8,6 +7,15 @@
  *   Michael Lawnick <michael.lawnick.ext@nsn.com>
  *
  * Copyright (C) 2013-2017 Wolfram Sang <wsa@the-dreams.de>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation; either version 2 of the License, or (at your option)
+ * any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+ * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
  */
 
 #define pr_fmt(fmt) "i2c-core: " fmt
@@ -314,8 +322,6 @@ static int i2c_device_probe(struct device *dev)
 
 	driver = to_i2c_driver(dev->driver);
 
-	client->irq = client->init_irq;
-
 	if (!client->irq && !driver->disable_i2c_core_irq_mapping) {
 		int irq = -ENOENT;
 
@@ -329,7 +335,7 @@ static int i2c_device_probe(struct device *dev)
 			if (irq == -EINVAL || irq == -ENODATA)
 				irq = of_irq_get(dev->of_node, 0);
 		} else if (ACPI_COMPANION(dev)) {
-			irq = i2c_acpi_get_irq(client);
+			irq = acpi_dev_gpio_irq_get(ACPI_COMPANION(dev), 0);
 		}
 		if (irq == -EPROBE_DEFER)
 			return irq;
@@ -426,7 +432,7 @@ static int i2c_device_remove(struct device *dev)
 	dev_pm_clear_wake_irq(&client->dev);
 	device_init_wakeup(&client->dev, false);
 
-	client->irq = 0;
+	client->irq = client->init_irq;
 	if (client->flags & I2C_CLIENT_HOST_NOTIFY)
 		pm_runtime_put(&client->adapter->dev);
 
@@ -681,8 +687,8 @@ static void i2c_dev_set_name(struct i2c_adapter *adap,
 		     i2c_encode_flags_to_addr(client));
 }
 
-int i2c_dev_irq_from_resources(const struct resource *resources,
-			       unsigned int num_resources)
+static int i2c_dev_irq_from_resources(const struct resource *resources,
+				      unsigned int num_resources)
 {
 	struct irq_data *irqd;
 	int i;
@@ -708,7 +714,7 @@ int i2c_dev_irq_from_resources(const struct resource *resources,
 }
 
 /**
- * i2c_new_client_device - instantiate an i2c device
+ * i2c_new_device - instantiate an i2c device
  * @adap: the adapter managing the device
  * @info: describes one I2C device; bus_num is ignored
  * Context: can sleep
@@ -721,17 +727,17 @@ int i2c_dev_irq_from_resources(const struct resource *resources,
  * before any i2c_adapter could exist.
  *
  * This returns the new i2c client, which may be saved for later use with
- * i2c_unregister_device(); or an ERR_PTR to describe the error.
+ * i2c_unregister_device(); or NULL to indicate an error.
  */
 struct i2c_client *
-i2c_new_client_device(struct i2c_adapter *adap, struct i2c_board_info const *info)
+i2c_new_device(struct i2c_adapter *adap, struct i2c_board_info const *info)
 {
 	struct i2c_client	*client;
 	int			status;
 
 	client = kzalloc(sizeof *client, GFP_KERNEL);
 	if (!client)
-		return ERR_PTR(-ENOMEM);
+		return NULL;
 
 	client->adapter = adap;
 
@@ -743,6 +749,7 @@ i2c_new_client_device(struct i2c_adapter *adap, struct i2c_board_info const *inf
 	if (!client->init_irq)
 		client->init_irq = i2c_dev_irq_from_resources(info->resources,
 							 info->num_resources);
+	client->irq = client->init_irq;
 
 	strlcpy(client->name, info->type, sizeof(client->name));
 
@@ -796,31 +803,7 @@ out_err:
 		client->name, client->addr, status);
 out_err_silent:
 	kfree(client);
-	return ERR_PTR(status);
-}
-EXPORT_SYMBOL_GPL(i2c_new_client_device);
-
-/**
- * i2c_new_device - instantiate an i2c device
- * @adap: the adapter managing the device
- * @info: describes one I2C device; bus_num is ignored
- * Context: can sleep
- *
- * This deprecated function has the same functionality as
- * @i2c_new_client_device, it just returns NULL instead of an ERR_PTR in case of
- * an error for compatibility with current I2C API. It will be removed once all
- * users are converted.
- *
- * This returns the new i2c client, which may be saved for later use with
- * i2c_unregister_device(); or NULL to indicate an error.
- */
-struct i2c_client *
-i2c_new_device(struct i2c_adapter *adap, struct i2c_board_info const *info)
-{
-	struct i2c_client *ret;
-
-	ret = i2c_new_client_device(adap, info);
-	return IS_ERR(ret) ? NULL : ret;
+	return NULL;
 }
 EXPORT_SYMBOL_GPL(i2c_new_device);
 
@@ -832,7 +815,7 @@ EXPORT_SYMBOL_GPL(i2c_new_device);
  */
 void i2c_unregister_device(struct i2c_client *client)
 {
-	if (IS_ERR_OR_NULL(client))
+	if (!client)
 		return;
 
 	if (client->dev.of_node) {
@@ -871,7 +854,7 @@ static struct i2c_driver dummy_driver = {
 };
 
 /**
- * i2c_new_dummy_device - return a new i2c device bound to a dummy driver
+ * i2c_new_dummy - return a new i2c device bound to a dummy driver
  * @adapter: the adapter managing the device
  * @address: seven bit address to be used
  * Context: can sleep
@@ -886,84 +869,17 @@ static struct i2c_driver dummy_driver = {
  * different driver.
  *
  * This returns the new i2c client, which should be saved for later use with
- * i2c_unregister_device(); or an ERR_PTR to describe the error.
+ * i2c_unregister_device(); or NULL to indicate an error.
  */
-struct i2c_client *i2c_new_dummy_device(struct i2c_adapter *adapter, u16 address)
+struct i2c_client *i2c_new_dummy(struct i2c_adapter *adapter, u16 address)
 {
 	struct i2c_board_info info = {
 		I2C_BOARD_INFO("dummy", address),
 	};
 
-	return i2c_new_client_device(adapter, &info);
-}
-EXPORT_SYMBOL_GPL(i2c_new_dummy_device);
-
-/**
- * i2c_new_dummy - return a new i2c device bound to a dummy driver
- * @adapter: the adapter managing the device
- * @address: seven bit address to be used
- * Context: can sleep
- *
- * This deprecated function has the same functionality as @i2c_new_dummy_device,
- * it just returns NULL instead of an ERR_PTR in case of an error for
- * compatibility with current I2C API. It will be removed once all users are
- * converted.
- *
- * This returns the new i2c client, which should be saved for later use with
- * i2c_unregister_device(); or NULL to indicate an error.
- */
-struct i2c_client *i2c_new_dummy(struct i2c_adapter *adapter, u16 address)
-{
-	struct i2c_client *ret;
-
-	ret = i2c_new_dummy_device(adapter, address);
-	return IS_ERR(ret) ? NULL : ret;
+	return i2c_new_device(adapter, &info);
 }
 EXPORT_SYMBOL_GPL(i2c_new_dummy);
-
-struct i2c_dummy_devres {
-	struct i2c_client *client;
-};
-
-static void devm_i2c_release_dummy(struct device *dev, void *res)
-{
-	struct i2c_dummy_devres *this = res;
-
-	i2c_unregister_device(this->client);
-}
-
-/**
- * devm_i2c_new_dummy_device - return a new i2c device bound to a dummy driver
- * @dev: device the managed resource is bound to
- * @adapter: the adapter managing the device
- * @address: seven bit address to be used
- * Context: can sleep
- *
- * This is the device-managed version of @i2c_new_dummy_device. It returns the
- * new i2c client or an ERR_PTR in case of an error.
- */
-struct i2c_client *devm_i2c_new_dummy_device(struct device *dev,
-					     struct i2c_adapter *adapter,
-					     u16 address)
-{
-	struct i2c_dummy_devres *dr;
-	struct i2c_client *client;
-
-	dr = devres_alloc(devm_i2c_release_dummy, sizeof(*dr), GFP_KERNEL);
-	if (!dr)
-		return ERR_PTR(-ENOMEM);
-
-	client = i2c_new_dummy_device(adapter, address);
-	if (IS_ERR(client)) {
-		devres_free(dr);
-	} else {
-		dr->client = client;
-		devres_add(dev, dr);
-	}
-
-	return client;
-}
-EXPORT_SYMBOL_GPL(devm_i2c_new_dummy_device);
 
 /**
  * i2c_new_secondary_device - Helper to get the instantiated secondary address
@@ -1084,9 +1000,9 @@ i2c_sysfs_new_device(struct device *dev, struct device_attribute *attr,
 		info.flags |= I2C_CLIENT_SLAVE;
 	}
 
-	client = i2c_new_client_device(adap, &info);
-	if (IS_ERR(client))
-		return PTR_ERR(client);
+	client = i2c_new_device(adap, &info);
+	if (!client)
+		return -EINVAL;
 
 	/* Keep track of the added device */
 	mutex_lock(&adap->userspace_clients_lock);
@@ -1663,7 +1579,7 @@ EXPORT_SYMBOL_GPL(i2c_parse_fw_timings);
 
 /* ------------------------------------------------------------------------- */
 
-int i2c_for_each_dev(void *data, int (*fn)(struct device *dev, void *data))
+int i2c_for_each_dev(void *data, int (*fn)(struct device *, void *))
 {
 	int res;
 
@@ -1955,10 +1871,11 @@ int __i2c_transfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
 
 	if (WARN_ON(!msgs || num < 1))
 		return -EINVAL;
-
-	ret = __i2c_check_suspended(adap);
-	if (ret)
-		return ret;
+	if (test_bit(I2C_ALF_IS_SUSPENDED, &adap->locked_flags)) {
+		if (!test_and_set_bit(I2C_ALF_SUSPEND_REPORTED, &adap->locked_flags))
+			dev_WARN(&adap->dev, "Transfer while suspended\n");
+		return -ESHUTDOWN;
+	}
 
 	if (adap->quirks && i2c_check_for_quirks(adap, msgs, num))
 		return -EOPNOTSUPP;
@@ -1980,11 +1897,7 @@ int __i2c_transfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
 	/* Retry automatically on arbitration loss */
 	orig_jiffies = jiffies;
 	for (ret = 0, try = 0; try <= adap->retries; try++) {
-		if (i2c_in_atomic_xfer_mode() && adap->algo->master_xfer_atomic)
-			ret = adap->algo->master_xfer_atomic(adap, msgs, num);
-		else
-			ret = adap->algo->master_xfer(adap, msgs, num);
-
+		ret = adap->algo->master_xfer(adap, msgs, num);
 		if (ret != -EAGAIN)
 			break;
 		if (time_after(jiffies, orig_jiffies + adap->timeout))
@@ -2040,9 +1953,14 @@ int i2c_transfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
 	 *    one (discarding status on the second message) or errno
 	 *    (discarding status on the first one).
 	 */
-	ret = __i2c_lock_bus_helper(adap);
-	if (ret)
-		return ret;
+	if (in_atomic() || irqs_disabled()) {
+		ret = i2c_trylock_bus(adap, I2C_LOCK_SEGMENT);
+		if (!ret)
+			/* I2C activity is ongoing. */
+			return -EAGAIN;
+	} else {
+		i2c_lock_bus(adap, I2C_LOCK_SEGMENT);
+	}
 
 	ret = __i2c_transfer(adap, msgs, num);
 	i2c_unlock_bus(adap, I2C_LOCK_SEGMENT);
@@ -2276,7 +2194,7 @@ struct i2c_client *
 i2c_new_probed_device(struct i2c_adapter *adap,
 		      struct i2c_board_info *info,
 		      unsigned short const *addr_list,
-		      int (*probe)(struct i2c_adapter *adap, unsigned short addr))
+		      int (*probe)(struct i2c_adapter *, unsigned short addr))
 {
 	int i;
 

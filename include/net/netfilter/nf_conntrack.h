@@ -49,7 +49,6 @@ union nf_conntrack_expect_proto {
 struct nf_conntrack_net {
 	unsigned int users4;
 	unsigned int users6;
-	unsigned int users_bridge;
 };
 
 #include <linux/types.h>
@@ -70,8 +69,7 @@ struct nf_conn {
 	struct nf_conntrack ct_general;
 
 	spinlock_t	lock;
-	/* jiffies32 when this ct is considered dead */
-	u32 timeout;
+	u16		cpu;
 
 #ifdef CONFIG_NF_CONNTRACK_ZONES
 	struct nf_conntrack_zone zone;
@@ -83,7 +81,9 @@ struct nf_conn {
 	/* Have we seen traffic both ways yet? (bitset) */
 	unsigned long status;
 
-	u16		cpu;
+	/* jiffies32 when this ct is considered dead */
+	u32 timeout;
+
 	possible_net_t ct_net;
 
 #if IS_ENABLED(CONFIG_NF_NAT)

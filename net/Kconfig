@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 #
 # Network configuration
 #
@@ -67,6 +66,8 @@ source "net/xdp/Kconfig"
 
 config INET
 	bool "TCP/IP networking"
+	select CRYPTO
+	select CRYPTO_AES
 	---help---
 	  These are the protocols used on the Internet and on most local
 	  Ethernets. It is highly recommended to say Y here (this will enlarge
@@ -428,8 +429,11 @@ config NET_SOCK_MSG
 	  with the help of BPF programs.
 
 config NET_DEVLINK
-	bool
-	default n
+	bool "Network physical/parent device Netlink interface"
+	help
+	  Network physical/parent device Netlink interface provides
+	  infrastructure to support access to physical chip-wide config and
+	  monitoring.
 
 config PAGE_POOL
        bool

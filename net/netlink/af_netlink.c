@@ -1,10 +1,14 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * NETLINK      Kernel-user communication protocol.
  *
  * 		Authors:	Alan Cox <alan@lxorguk.ukuu.org.uk>
  * 				Alexey Kuznetsov <kuznet@ms2.inr.ac.ru>
  * 				Patrick McHardy <kaber@trash.net>
+ *
+ *		This program is free software; you can redistribute it and/or
+ *		modify it under the terms of the GNU General Public License
+ *		as published by the Free Software Foundation; either version
+ *		2 of the License, or (at your option) any later version.
  *
  * Tue Jun 26 14:36:48 MEST 2001 Herbert "herp" Rosmanith
  *                               added netlink_proto_exit
@@ -241,8 +245,13 @@ static __net_init int netlink_tap_init_net(struct net *net)
 	return 0;
 }
 
+static void __net_exit netlink_tap_exit_net(struct net *net)
+{
+}
+
 static struct pernet_operations netlink_tap_net_ops = {
 	.init = netlink_tap_init_net,
+	.exit = netlink_tap_exit_net,
 	.id   = &netlink_tap_net_id,
 	.size = sizeof(struct netlink_tap_net),
 };
@@ -2539,10 +2548,12 @@ struct nl_seq_iter {
 	int link;
 };
 
-static void netlink_walk_start(struct nl_seq_iter *iter)
+static int netlink_walk_start(struct nl_seq_iter *iter)
 {
 	rhashtable_walk_enter(&nl_table[iter->link].hash, &iter->hti);
 	rhashtable_walk_start(&iter->hti);
+
+	return 0;
 }
 
 static void netlink_walk_stop(struct nl_seq_iter *iter)
@@ -2558,6 +2569,8 @@ static void *__netlink_seq_next(struct seq_file *seq)
 
 	do {
 		for (;;) {
+			int err;
+
 			nlk = rhashtable_walk_next(&iter->hti);
 
 			if (IS_ERR(nlk)) {
@@ -2574,7 +2587,9 @@ static void *__netlink_seq_next(struct seq_file *seq)
 			if (++iter->link >= MAX_LINKS)
 				return NULL;
 
-			netlink_walk_start(iter);
+			err = netlink_walk_start(iter);
+			if (err)
+				return ERR_PTR(err);
 		}
 	} while (sock_net(&nlk->sk) != seq_file_net(seq));
 
@@ -2586,10 +2601,13 @@ static void *netlink_seq_start(struct seq_file *seq, loff_t *posp)
 	struct nl_seq_iter *iter = seq->private;
 	void *obj = SEQ_START_TOKEN;
 	loff_t pos;
+	int err;
 
 	iter->link = 0;
 
-	netlink_walk_start(iter);
+	err = netlink_walk_start(iter);
+	if (err)
+		return ERR_PTR(err);
 
 	for (pos = *posp; pos && obj && !IS_ERR(obj); pos--)
 		obj = __netlink_seq_next(seq);
@@ -2624,7 +2642,7 @@ static int netlink_seq_show(struct seq_file *seq, void *v)
 		struct sock *s = v;
 		struct netlink_sock *nlk = nlk_sk(s);
 
-		seq_printf(seq, "%pK %-3d %-10u %08x %-8d %-8d %-5d %-8d %-8u %-8lu\n",
+		seq_printf(seq, "%pK %-3d %-10u %08x %-8d %-8d %-5d %-8d %-8d %-8lu\n",
 			   s,
 			   s->sk_protocol,
 			   nlk->portid,

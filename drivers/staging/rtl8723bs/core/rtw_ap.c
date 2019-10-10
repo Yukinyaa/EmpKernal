@@ -443,7 +443,7 @@ void add_RATid(struct adapter *padapter, struct sta_info *psta, u8 rssi_level)
 	}
 
 	psta->wireless_mode = sta_band;
-	psta->raid = networktype_to_raid_ex(padapter, psta);
+	psta->raid = rtw_hal_networktype_to_raid(padapter, psta);
 
 	if (psta->aid < NUM_STA) {
 		u8 arg[4] = {0};
@@ -512,7 +512,7 @@ void update_bmc_sta(struct adapter *padapter)
 		rtw_hal_update_sta_rate_mask(padapter, psta);
 		tx_ra_bitmap = psta->ra_mask;
 
-		psta->raid = networktype_to_raid_ex(padapter, psta);
+		psta->raid = rtw_hal_networktype_to_raid(padapter, psta);
 
 		/* ap mode */
 		rtw_hal_set_odm_var(padapter, HAL_ODM_STA_INFO, psta, true);
@@ -782,8 +782,12 @@ void start_bss_network(struct adapter *padapter, u8 *pbuf)
 	/* check if there is wps ie, */
 	/* if there is wpsie in beacon, the hostapd will update beacon twice when stating hostapd, */
 	/* and at first time the security ie (RSN/WPA IE) will not include in beacon. */
-	if (!rtw_get_wps_ie(pnetwork->IEs+_FIXED_IE_LENGTH_,
-			    pnetwork->IELength-_FIXED_IE_LENGTH_, NULL, NULL))
+	if (NULL == rtw_get_wps_ie(
+		pnetwork->IEs+_FIXED_IE_LENGTH_,
+		pnetwork->IELength-_FIXED_IE_LENGTH_,
+		NULL,
+		NULL
+	))
 		pmlmeext->bstart_bss = true;
 
 	/* todo: update wmm, ht cap */
@@ -1394,9 +1398,10 @@ int rtw_acl_add_sta(struct adapter *padapter, u8 *addr)
 	return ret;
 }
 
-void rtw_acl_remove_sta(struct adapter *padapter, u8 *addr)
+int rtw_acl_remove_sta(struct adapter *padapter, u8 *addr)
 {
 	struct list_head	*plist, *phead;
+	int ret = 0;
 	struct rtw_wlan_acl_node *paclnode;
 	struct sta_priv *pstapriv = &padapter->stapriv;
 	struct wlan_acl_pool *pacl_list = &pstapriv->acl_list;
@@ -1437,6 +1442,7 @@ void rtw_acl_remove_sta(struct adapter *padapter, u8 *addr)
 
 	DBG_871X("%s, acl_num =%d\n", __func__, pacl_list->num);
 
+	return ret;
 }
 
 u8 rtw_ap_set_pairwise_key(struct adapter *padapter, struct sta_info *psta)
@@ -1501,6 +1507,8 @@ static int rtw_ap_set_key(
 		res = _FAIL;
 		goto exit;
 	}
+
+	memset(psetkeyparm, 0, sizeof(struct setkey_parm));
 
 	psetkeyparm->keyid = (u8)keyid;
 	if (is_wep_enc(alg))
@@ -1910,7 +1918,7 @@ static int rtw_ht_operation_update(struct adapter *padapter)
 
 void associated_clients_update(struct adapter *padapter, u8 updated)
 {
-	/* update associated stations cap. */
+	/* update associcated stations cap. */
 	if (updated) {
 		struct list_head	*phead, *plist;
 		struct sta_info *psta = NULL;
@@ -2068,7 +2076,7 @@ void bss_cap_update_on_sta_join(struct adapter *padapter, struct sta_info *psta)
 		update_beacon(padapter, _HT_ADD_INFO_IE_, NULL, true);
 	}
 
-	/* update associated stations cap. */
+	/* update associcated stations cap. */
 	associated_clients_update(padapter,  beacon_updated);
 
 	DBG_871X("%s, updated =%d\n", __func__, beacon_updated);
@@ -2132,7 +2140,7 @@ u8 bss_cap_update_on_sta_leave(struct adapter *padapter, struct sta_info *psta)
 		update_beacon(padapter, _HT_ADD_INFO_IE_, NULL, true);
 	}
 
-	/* update associated stations cap. */
+	/* update associcated stations cap. */
 	/* associated_clients_update(padapter,  beacon_updated); //move it to avoid deadlock */
 
 	DBG_871X("%s, updated =%d\n", __func__, beacon_updated);
@@ -2152,7 +2160,7 @@ u8 ap_free_sta(
 	if (!psta)
 		return beacon_updated;
 
-	if (active) {
+	if (active == true) {
 		/* tear down Rx AMPDU */
 		send_delba(padapter, 0, psta->hwaddr);/*  recipient */
 
@@ -2185,9 +2193,10 @@ u8 ap_free_sta(
 	return beacon_updated;
 }
 
-void rtw_sta_flush(struct adapter *padapter)
+int rtw_sta_flush(struct adapter *padapter)
 {
 	struct list_head	*phead, *plist;
+	int ret = 0;
 	struct sta_info *psta = NULL;
 	struct sta_priv *pstapriv = &padapter->stapriv;
 	struct mlme_ext_priv *pmlmeext = &padapter->mlmeextpriv;
@@ -2197,7 +2206,7 @@ void rtw_sta_flush(struct adapter *padapter)
 	DBG_871X(FUNC_NDEV_FMT"\n", FUNC_NDEV_ARG(padapter->pnetdev));
 
 	if ((pmlmeinfo->state&0x03) != WIFI_FW_AP_STATE)
-		return;
+		return ret;
 
 	spin_lock_bh(&pstapriv->asoc_list_lock);
 	phead = &pstapriv->asoc_list;
@@ -2221,6 +2230,8 @@ void rtw_sta_flush(struct adapter *padapter)
 	issue_deauth(padapter, bc_addr, WLAN_REASON_DEAUTH_LEAVING);
 
 	associated_clients_update(padapter, true);
+
+	return ret;
 }
 
 /* called > TSR LEVEL for USB or SDIO Interface*/
@@ -2329,8 +2340,8 @@ void rtw_ap_restore_network(struct adapter *padapter)
 			Update_RA_Entry(padapter, psta);
 			/* pairwise key */
 			/* per sta pairwise key and settings */
-			if ((psecuritypriv->dot11PrivacyAlgrthm == _TKIP_) ||
-				(psecuritypriv->dot11PrivacyAlgrthm == _AES_)) {
+			if ((padapter->securitypriv.dot11PrivacyAlgrthm == _TKIP_) ||
+				(padapter->securitypriv.dot11PrivacyAlgrthm == _AES_)) {
 				rtw_setstakey_cmd(padapter, psta, true, false);
 			}
 		}

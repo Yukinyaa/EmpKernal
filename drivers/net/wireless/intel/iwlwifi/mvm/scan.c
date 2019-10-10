@@ -83,10 +83,8 @@
 #define IWL_SCAN_ADWELL_MAX_BUDGET_FULL_SCAN 300
 /* adaptive dwell max budget time [TU] for directed scan */
 #define IWL_SCAN_ADWELL_MAX_BUDGET_DIRECTED_SCAN 100
-/* adaptive dwell default high band APs number */
-#define IWL_SCAN_ADWELL_DEFAULT_HB_N_APS 8
-/* adaptive dwell default low band APs number */
-#define IWL_SCAN_ADWELL_DEFAULT_LB_N_APS 2
+/* adaptive dwell default APs number */
+#define IWL_SCAN_ADWELL_DEFAULT_N_APS 2
 /* adaptive dwell default APs number in social channels (1, 6, 11) */
 #define IWL_SCAN_ADWELL_DEFAULT_N_APS_SOCIAL 10
 
@@ -1084,23 +1082,21 @@ static void iwl_mvm_fill_scan_dwell(struct iwl_mvm *mvm,
 	dwell->extended = IWL_SCAN_DWELL_EXTENDED;
 }
 
-static void iwl_mvm_fill_channels(struct iwl_mvm *mvm, u8 *channels,
-				  u32 max_channels)
+static void iwl_mvm_fill_channels(struct iwl_mvm *mvm, u8 *channels)
 {
 	struct ieee80211_supported_band *band;
 	int i, j = 0;
 
 	band = &mvm->nvm_data->bands[NL80211_BAND_2GHZ];
-	for (i = 0; i < band->n_channels && j < max_channels; i++, j++)
+	for (i = 0; i < band->n_channels; i++, j++)
 		channels[j] = band->channels[i].hw_value;
 	band = &mvm->nvm_data->bands[NL80211_BAND_5GHZ];
-	for (i = 0; i < band->n_channels && j < max_channels; i++, j++)
+	for (i = 0; i < band->n_channels; i++, j++)
 		channels[j] = band->channels[i].hw_value;
 }
 
 static void iwl_mvm_fill_scan_config_v1(struct iwl_mvm *mvm, void *config,
-					u32 flags, u8 channel_flags,
-					u32 max_channels)
+					u32 flags, u8 channel_flags)
 {
 	enum iwl_mvm_scan_type type = iwl_mvm_get_scan_type(mvm, NULL);
 	struct iwl_scan_config_v1 *cfg = config;
@@ -1119,12 +1115,11 @@ static void iwl_mvm_fill_scan_config_v1(struct iwl_mvm *mvm, void *config,
 	cfg->bcast_sta_id = mvm->aux_sta.sta_id;
 	cfg->channel_flags = channel_flags;
 
-	iwl_mvm_fill_channels(mvm, cfg->channel_array, max_channels);
+	iwl_mvm_fill_channels(mvm, cfg->channel_array);
 }
 
 static void iwl_mvm_fill_scan_config(struct iwl_mvm *mvm, void *config,
-				     u32 flags, u8 channel_flags,
-				     u32 max_channels)
+				     u32 flags, u8 channel_flags)
 {
 	struct iwl_scan_config *cfg = config;
 
@@ -1167,7 +1162,7 @@ static void iwl_mvm_fill_scan_config(struct iwl_mvm *mvm, void *config,
 	cfg->bcast_sta_id = mvm->aux_sta.sta_id;
 	cfg->channel_flags = channel_flags;
 
-	iwl_mvm_fill_channels(mvm, cfg->channel_array, max_channels);
+	iwl_mvm_fill_channels(mvm, cfg->channel_array);
 }
 
 int iwl_mvm_config_scan(struct iwl_mvm *mvm)
@@ -1186,7 +1181,7 @@ int iwl_mvm_config_scan(struct iwl_mvm *mvm)
 	u8 channel_flags;
 
 	if (WARN_ON(num_channels > mvm->fw->ucode_capa.n_scan_channels))
-		num_channels = mvm->fw->ucode_capa.n_scan_channels;
+		return -ENOBUFS;
 
 	if (iwl_mvm_is_cdb_supported(mvm)) {
 		type = iwl_mvm_get_scan_type_band(mvm, NULL,
@@ -1239,11 +1234,9 @@ int iwl_mvm_config_scan(struct iwl_mvm *mvm)
 			flags |= (iwl_mvm_is_scan_fragmented(hb_type)) ?
 				 SCAN_CONFIG_FLAG_SET_LMAC2_FRAGMENTED :
 				 SCAN_CONFIG_FLAG_CLEAR_LMAC2_FRAGMENTED;
-		iwl_mvm_fill_scan_config(mvm, cfg, flags, channel_flags,
-					 num_channels);
+		iwl_mvm_fill_scan_config(mvm, cfg, flags, channel_flags);
 	} else {
-		iwl_mvm_fill_scan_config_v1(mvm, cfg, flags, channel_flags,
-					    num_channels);
+		iwl_mvm_fill_scan_config_v1(mvm, cfg, flags, channel_flags);
 	}
 
 	cmd.data[0] = cfg;
@@ -1290,11 +1283,7 @@ static void iwl_mvm_scan_umac_dwell(struct iwl_mvm *mvm,
 		cmd->v7.adwell_default_n_aps_social =
 			IWL_SCAN_ADWELL_DEFAULT_N_APS_SOCIAL;
 		cmd->v7.adwell_default_n_aps =
-			IWL_SCAN_ADWELL_DEFAULT_LB_N_APS;
-
-		if (iwl_mvm_is_adwell_hb_ap_num_supported(mvm))
-			cmd->v9.adwell_default_hb_n_aps =
-				IWL_SCAN_ADWELL_DEFAULT_HB_N_APS;
+			IWL_SCAN_ADWELL_DEFAULT_N_APS;
 
 		/* if custom max budget was configured with debugfs */
 		if (IWL_MVM_ADWELL_MAX_BUDGET)

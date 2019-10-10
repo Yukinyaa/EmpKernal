@@ -205,12 +205,7 @@ static int __vb2_buf_mem_alloc(struct vb2_buffer *vb)
 	 * NOTE: mmapped areas should be page aligned
 	 */
 	for (plane = 0; plane < vb->num_planes; ++plane) {
-		/* Memops alloc requires size to be page aligned. */
 		unsigned long size = PAGE_ALIGN(vb->planes[plane].length);
-
-		/* Did it wrap around? */
-		if (size < vb->planes[plane].length)
-			goto free;
 
 		mem_priv = call_ptr_memop(vb, alloc,
 				q->alloc_devs[plane] ? : q->dev,
@@ -677,11 +672,6 @@ int vb2_core_reqbufs(struct vb2_queue *q, enum vb2_memory memory,
 		return -EBUSY;
 	}
 
-	if (q->waiting_in_dqbuf && *count) {
-		dprintk(1, "another dup()ped fd is waiting for a buffer\n");
-		return -EBUSY;
-	}
-
 	if (*count == 0 || q->num_buffers != 0 ||
 	    (q->memory != VB2_MEMORY_UNKNOWN && q->memory != memory)) {
 		/*
@@ -817,10 +807,6 @@ int vb2_core_create_bufs(struct vb2_queue *q, enum vb2_memory memory,
 	}
 
 	if (!q->num_buffers) {
-		if (q->waiting_in_dqbuf && *count) {
-			dprintk(1, "another dup()ped fd is waiting for a buffer\n");
-			return -EBUSY;
-		}
 		memset(q->alloc_devs, 0, sizeof(q->alloc_devs));
 		q->memory = memory;
 		q->waiting_for_buffers = !q->is_output;
@@ -929,7 +915,8 @@ void vb2_buffer_done(struct vb2_buffer *vb, enum vb2_buffer_state state)
 
 	if (WARN_ON(state != VB2_BUF_STATE_DONE &&
 		    state != VB2_BUF_STATE_ERROR &&
-		    state != VB2_BUF_STATE_QUEUED))
+		    state != VB2_BUF_STATE_QUEUED &&
+		    state != VB2_BUF_STATE_REQUEUEING))
 		state = VB2_BUF_STATE_ERROR;
 
 #ifdef CONFIG_VIDEO_ADV_DEBUG
@@ -942,7 +929,8 @@ void vb2_buffer_done(struct vb2_buffer *vb, enum vb2_buffer_state state)
 	dprintk(4, "done processing on buffer %d, state: %d\n",
 			vb->index, state);
 
-	if (state != VB2_BUF_STATE_QUEUED) {
+	if (state != VB2_BUF_STATE_QUEUED &&
+	    state != VB2_BUF_STATE_REQUEUEING) {
 		/* sync buffers */
 		for (plane = 0; plane < vb->num_planes; ++plane)
 			call_void_memop(vb, finish, vb->planes[plane].mem_priv);
@@ -950,7 +938,8 @@ void vb2_buffer_done(struct vb2_buffer *vb, enum vb2_buffer_state state)
 	}
 
 	spin_lock_irqsave(&q->done_lock, flags);
-	if (state == VB2_BUF_STATE_QUEUED) {
+	if (state == VB2_BUF_STATE_QUEUED ||
+	    state == VB2_BUF_STATE_REQUEUEING) {
 		vb->state = VB2_BUF_STATE_QUEUED;
 	} else {
 		/* Add the buffer to the done buffers list */
@@ -960,6 +949,8 @@ void vb2_buffer_done(struct vb2_buffer *vb, enum vb2_buffer_state state)
 	atomic_dec(&q->owned_by_drv_count);
 
 	if (state != VB2_BUF_STATE_QUEUED && vb->req_obj.req) {
+		/* This is not supported at the moment */
+		WARN_ON(state == VB2_BUF_STATE_REQUEUEING);
 		media_request_object_unbind(&vb->req_obj);
 		media_request_object_put(&vb->req_obj);
 	}
@@ -970,6 +961,10 @@ void vb2_buffer_done(struct vb2_buffer *vb, enum vb2_buffer_state state)
 
 	switch (state) {
 	case VB2_BUF_STATE_QUEUED:
+		return;
+	case VB2_BUF_STATE_REQUEUEING:
+		if (q->start_streaming_called)
+			__enqueue_in_driver(vb);
 		return;
 	default:
 		/* Inform any processes that may be waiting for buffers */
@@ -1521,12 +1516,6 @@ int vb2_core_qbuf(struct vb2_queue *q, unsigned int index, void *pb,
 
 	vb = q->bufs[index];
 
-	if (!req && vb->state != VB2_BUF_STATE_IN_REQUEST &&
-	    q->requires_requests) {
-		dprintk(1, "qbuf requires a request\n");
-		return -EBADR;
-	}
-
 	if ((req && q->uses_qbuf) ||
 	    (!req && vb->state != VB2_BUF_STATE_IN_REQUEST &&
 	     q->uses_requests)) {
@@ -1670,11 +1659,6 @@ static int __vb2_wait_for_done_vb(struct vb2_queue *q, int nonblocking)
 	for (;;) {
 		int ret;
 
-		if (q->waiting_in_dqbuf) {
-			dprintk(1, "another dup()ped fd is waiting for a buffer\n");
-			return -EBUSY;
-		}
-
 		if (!q->streaming) {
 			dprintk(1, "streaming off, will not wait for buffers\n");
 			return -EINVAL;
@@ -1702,7 +1686,6 @@ static int __vb2_wait_for_done_vb(struct vb2_queue *q, int nonblocking)
 			return -EAGAIN;
 		}
 
-		q->waiting_in_dqbuf = 1;
 		/*
 		 * We are streaming and blocking, wait for another buffer to
 		 * become ready or for streamoff. Driver's lock is released to
@@ -1723,7 +1706,6 @@ static int __vb2_wait_for_done_vb(struct vb2_queue *q, int nonblocking)
 		 * the locks or return an error if one occurred.
 		 */
 		call_void_qop(q, wait_finish, q);
-		q->waiting_in_dqbuf = 0;
 		if (ret) {
 			dprintk(1, "sleep was interrupted\n");
 			return ret;
@@ -2206,13 +2188,6 @@ int vb2_mmap(struct vb2_queue *q, struct vm_area_struct *vma)
 		goto unlock;
 	}
 
-	/*
-	 * vm_pgoff is treated in V4L2 API as a 'cookie' to select a buffer,
-	 * not as a in-buffer offset. We always want to mmap a whole buffer
-	 * from its beginning.
-	 */
-	vma->vm_pgoff = 0;
-
 	ret = call_memop(vb, mmap, vb->planes[plane].mem_priv, vma);
 
 unlock:
@@ -2270,9 +2245,6 @@ int vb2_core_queue_init(struct vb2_queue *q)
 	    WARN_ON(!q->io_modes)	  ||
 	    WARN_ON(!q->ops->queue_setup) ||
 	    WARN_ON(!q->ops->buf_queue))
-		return -EINVAL;
-
-	if (WARN_ON(q->requires_requests && !q->supports_requests))
 		return -EINVAL;
 
 	INIT_LIST_HEAD(&q->queued_list);
@@ -2612,12 +2584,6 @@ static size_t __vb2_perform_fileio(struct vb2_queue *q, char __user *data, size_
 
 	if (!data)
 		return -EINVAL;
-
-	if (q->waiting_in_dqbuf) {
-		dprintk(3, "another dup()ped fd is %s\n",
-			read ? "reading" : "writing");
-		return -EBUSY;
-	}
 
 	/*
 	 * Initialize emulator on first call.

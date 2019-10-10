@@ -1,7 +1,18 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2009 Nokia Corporation
  * Author: Tomi Valkeinen <tomi.valkeinen@ti.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #define DSS_SUBSYS_NAME "DSI"
@@ -1331,9 +1342,12 @@ static int dsi_pll_enable(struct dss_pll *pll)
 	 */
 	dsi_enable_scp_clk(dsi);
 
-	r = regulator_enable(dsi->vdds_dsi_reg);
-	if (r)
-		goto err0;
+	if (!dsi->vdds_dsi_enabled) {
+		r = regulator_enable(dsi->vdds_dsi_reg);
+		if (r)
+			goto err0;
+		dsi->vdds_dsi_enabled = true;
+	}
 
 	/* XXX PLL does not come out of reset without this... */
 	dispc_pck_free_enable(dsi->dss->dispc, 1);
@@ -1358,25 +1372,36 @@ static int dsi_pll_enable(struct dss_pll *pll)
 
 	return 0;
 err1:
-	regulator_disable(dsi->vdds_dsi_reg);
+	if (dsi->vdds_dsi_enabled) {
+		regulator_disable(dsi->vdds_dsi_reg);
+		dsi->vdds_dsi_enabled = false;
+	}
 err0:
 	dsi_disable_scp_clk(dsi);
 	dsi_runtime_put(dsi);
 	return r;
 }
 
-static void dsi_pll_disable(struct dss_pll *pll)
+static void dsi_pll_uninit(struct dsi_data *dsi, bool disconnect_lanes)
 {
-	struct dsi_data *dsi = container_of(pll, struct dsi_data, pll);
-
 	dsi_pll_power(dsi, DSI_PLL_POWER_OFF);
-
-	regulator_disable(dsi->vdds_dsi_reg);
+	if (disconnect_lanes) {
+		WARN_ON(!dsi->vdds_dsi_enabled);
+		regulator_disable(dsi->vdds_dsi_reg);
+		dsi->vdds_dsi_enabled = false;
+	}
 
 	dsi_disable_scp_clk(dsi);
 	dsi_runtime_put(dsi);
 
-	DSSDBG("PLL disable done\n");
+	DSSDBG("PLL uninit done\n");
+}
+
+static void dsi_pll_disable(struct dss_pll *pll)
+{
+	struct dsi_data *dsi = container_of(pll, struct dsi_data, pll);
+
+	dsi_pll_uninit(dsi, true);
 }
 
 static int dsi_dump_dsi_clocks(struct seq_file *s, void *p)
@@ -3728,13 +3753,19 @@ static int dsi_enable_video_output(struct omap_dss_device *dssdev, int channel)
 {
 	struct dsi_data *dsi = to_dsi_data(dssdev);
 	int bpp = dsi_get_pixel_size(dsi->pix_fmt);
+	struct omap_dss_device *out = &dsi->output;
 	u8 data_type;
 	u16 word_count;
 	int r;
 
+	if (!out->dispc_channel_connected) {
+		DSSERR("failed to enable display: no output/manager\n");
+		return -ENODEV;
+	}
+
 	r = dsi_display_init_dispc(dsi);
 	if (r)
-		return r;
+		goto err_init_dispc;
 
 	if (dsi->mode == OMAP_DSS_DSI_VIDEO_MODE) {
 		switch (dsi->pix_fmt) {
@@ -3783,6 +3814,7 @@ err_mgr_enable:
 	}
 err_pix_fmt:
 	dsi_display_uninit_dispc(dsi);
+err_init_dispc:
 	return r;
 }
 
@@ -4064,25 +4096,17 @@ static int dsi_display_init_dsi(struct dsi_data *dsi)
 
 	r = dss_pll_enable(&dsi->pll);
 	if (r)
-		return r;
+		goto err0;
 
 	r = dsi_configure_dsi_clocks(dsi);
 	if (r)
-		goto err0;
+		goto err1;
 
 	dss_select_dsi_clk_source(dsi->dss, dsi->module_id,
 				  dsi->module_id == 0 ?
 				  DSS_CLK_SRC_PLL1_2 : DSS_CLK_SRC_PLL2_2);
 
 	DSSDBG("PLL OK\n");
-
-	if (!dsi->vdds_dsi_enabled) {
-		r = regulator_enable(dsi->vdds_dsi_reg);
-		if (r)
-			goto err1;
-
-		dsi->vdds_dsi_enabled = true;
-	}
 
 	r = dsi_cio_init(dsi);
 	if (r)
@@ -4112,13 +4136,10 @@ static int dsi_display_init_dsi(struct dsi_data *dsi)
 err3:
 	dsi_cio_uninit(dsi);
 err2:
-	regulator_disable(dsi->vdds_dsi_reg);
-	dsi->vdds_dsi_enabled = false;
-err1:
 	dss_select_dsi_clk_source(dsi->dss, dsi->module_id, DSS_CLK_SRC_FCK);
-err0:
+err1:
 	dss_pll_disable(&dsi->pll);
-
+err0:
 	return r;
 }
 
@@ -4137,18 +4158,13 @@ static void dsi_display_uninit_dsi(struct dsi_data *dsi, bool disconnect_lanes,
 
 	dss_select_dsi_clk_source(dsi->dss, dsi->module_id, DSS_CLK_SRC_FCK);
 	dsi_cio_uninit(dsi);
-	dss_pll_disable(&dsi->pll);
-
-	if (disconnect_lanes) {
-		regulator_disable(dsi->vdds_dsi_reg);
-		dsi->vdds_dsi_enabled = false;
-	}
+	dsi_pll_uninit(dsi, disconnect_lanes);
 }
 
-static void dsi_display_enable(struct omap_dss_device *dssdev)
+static int dsi_display_enable(struct omap_dss_device *dssdev)
 {
 	struct dsi_data *dsi = to_dsi_data(dssdev);
-	int r;
+	int r = 0;
 
 	DSSDBG("dsi_display_enable\n");
 
@@ -4168,13 +4184,14 @@ static void dsi_display_enable(struct omap_dss_device *dssdev)
 
 	mutex_unlock(&dsi->lock);
 
-	return;
+	return 0;
 
 err_init_dsi:
 	dsi_runtime_put(dsi);
 err_get_dsi:
 	mutex_unlock(&dsi->lock);
 	DSSDBG("dsi_display_enable FAILED\n");
+	return r;
 }
 
 static void dsi_display_disable(struct omap_dss_device *dssdev,
@@ -4871,12 +4888,21 @@ static int dsi_get_clocks(struct dsi_data *dsi)
 static int dsi_connect(struct omap_dss_device *src,
 		       struct omap_dss_device *dst)
 {
-	return omapdss_device_connect(dst->dss, dst, dst->next);
+	int r;
+
+	r = omapdss_device_connect(dst->dss, dst, dst->next);
+	if (r)
+		return r;
+
+	dst->dispc_channel_connected = true;
+	return 0;
 }
 
 static void dsi_disconnect(struct omap_dss_device *src,
 			   struct omap_dss_device *dst)
 {
+	dst->dispc_channel_connected = false;
+
 	omapdss_device_disconnect(dst, dst->next);
 }
 
@@ -5112,19 +5138,29 @@ static int dsi_init_output(struct dsi_data *dsi)
 	out->id = dsi->module_id == 0 ?
 			OMAP_DSS_OUTPUT_DSI1 : OMAP_DSS_OUTPUT_DSI2;
 
-	out->type = OMAP_DISPLAY_TYPE_DSI;
+	out->output_type = OMAP_DISPLAY_TYPE_DSI;
 	out->name = dsi->module_id == 0 ? "dsi.0" : "dsi.1";
 	out->dispc_channel = dsi_get_channel(dsi);
 	out->ops = &dsi_ops;
 	out->owner = THIS_MODULE;
 	out->of_ports = BIT(0);
-	out->bus_flags = DRM_BUS_FLAG_PIXDATA_DRIVE_POSEDGE
+	out->bus_flags = DRM_BUS_FLAG_PIXDATA_POSEDGE
 		       | DRM_BUS_FLAG_DE_HIGH
-		       | DRM_BUS_FLAG_SYNC_DRIVE_NEGEDGE;
+		       | DRM_BUS_FLAG_SYNC_NEGEDGE;
 
-	r = omapdss_device_init_output(out);
-	if (r < 0)
+	out->next = omapdss_of_find_connected_device(out->dev->of_node, 0);
+	if (IS_ERR(out->next)) {
+		if (PTR_ERR(out->next) != -EPROBE_DEFER)
+			dev_err(out->dev, "failed to find video sink\n");
+		return PTR_ERR(out->next);
+	}
+
+	r = omapdss_output_validate(out);
+	if (r) {
+		omapdss_device_put(out->next);
+		out->next = NULL;
 		return r;
+	}
 
 	omapdss_device_register(out);
 
@@ -5135,8 +5171,9 @@ static void dsi_uninit_output(struct dsi_data *dsi)
 {
 	struct omap_dss_device *out = &dsi->output;
 
+	if (out->next)
+		omapdss_device_put(out->next);
 	omapdss_device_unregister(out);
-	omapdss_device_cleanup_output(out);
 }
 
 static int dsi_probe_of(struct dsi_data *dsi)

@@ -1,7 +1,19 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*  Paravirtualization interfaces
     Copyright (C) 2006 Rusty Russell IBM Corporation
 
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
     2007 - x86_64 support added by Glauber de Oliveira Costa, Red Hat Inc
 */
@@ -58,24 +70,24 @@ struct branch {
 	u32 delta;
 } __attribute__((packed));
 
-static unsigned paravirt_patch_call(void *insn_buff, const void *target,
+static unsigned paravirt_patch_call(void *insnbuf, const void *target,
 				    unsigned long addr, unsigned len)
 {
-	const int call_len = 5;
-	struct branch *b = insn_buff;
-	unsigned long delta = (unsigned long)target - (addr+call_len);
+	struct branch *b = insnbuf;
+	unsigned long delta = (unsigned long)target - (addr+5);
 
-	if (len < call_len) {
-		pr_warn("paravirt: Failed to patch indirect CALL at %ps\n", (void *)addr);
-		/* Kernel might not be viable if patching fails, bail out: */
-		BUG_ON(1);
+	if (len < 5) {
+#ifdef CONFIG_RETPOLINE
+		WARN_ONCE(1, "Failing to patch indirect CALL in %ps\n", (void *)addr);
+#endif
+		return len;	/* call too long for patch site */
 	}
 
 	b->opcode = 0xe8; /* call */
 	b->delta = delta;
-	BUILD_BUG_ON(sizeof(*b) != call_len);
+	BUILD_BUG_ON(sizeof(*b) != 5);
 
-	return call_len;
+	return 5;
 }
 
 #ifdef CONFIG_PARAVIRT_XXL
@@ -85,10 +97,10 @@ u64 notrace _paravirt_ident_64(u64 x)
 	return x;
 }
 
-static unsigned paravirt_patch_jmp(void *insn_buff, const void *target,
+static unsigned paravirt_patch_jmp(void *insnbuf, const void *target,
 				   unsigned long addr, unsigned len)
 {
-	struct branch *b = insn_buff;
+	struct branch *b = insnbuf;
 	unsigned long delta = (unsigned long)target - (addr+5);
 
 	if (len < 5) {
@@ -109,11 +121,11 @@ DEFINE_STATIC_KEY_TRUE(virt_spin_lock_key);
 
 void __init native_pv_lock_init(void)
 {
-	if (!boot_cpu_has(X86_FEATURE_HYPERVISOR))
+	if (!static_cpu_has(X86_FEATURE_HYPERVISOR))
 		static_branch_disable(&virt_spin_lock_key);
 }
 
-unsigned paravirt_patch_default(u8 type, void *insn_buff,
+unsigned paravirt_patch_default(u8 type, void *insnbuf,
 				unsigned long addr, unsigned len)
 {
 	/*
@@ -125,36 +137,36 @@ unsigned paravirt_patch_default(u8 type, void *insn_buff,
 
 	if (opfunc == NULL)
 		/* If there's no function, patch it with a ud2a (BUG) */
-		ret = paravirt_patch_insns(insn_buff, len, ud2a, ud2a+sizeof(ud2a));
+		ret = paravirt_patch_insns(insnbuf, len, ud2a, ud2a+sizeof(ud2a));
 	else if (opfunc == _paravirt_nop)
 		ret = 0;
 
 #ifdef CONFIG_PARAVIRT_XXL
 	/* identity functions just return their single argument */
 	else if (opfunc == _paravirt_ident_64)
-		ret = paravirt_patch_ident_64(insn_buff, len);
+		ret = paravirt_patch_ident_64(insnbuf, len);
 
 	else if (type == PARAVIRT_PATCH(cpu.iret) ||
 		 type == PARAVIRT_PATCH(cpu.usergs_sysret64))
 		/* If operation requires a jmp, then jmp */
-		ret = paravirt_patch_jmp(insn_buff, opfunc, addr, len);
+		ret = paravirt_patch_jmp(insnbuf, opfunc, addr, len);
 #endif
 	else
 		/* Otherwise call the function. */
-		ret = paravirt_patch_call(insn_buff, opfunc, addr, len);
+		ret = paravirt_patch_call(insnbuf, opfunc, addr, len);
 
 	return ret;
 }
 
-unsigned paravirt_patch_insns(void *insn_buff, unsigned len,
+unsigned paravirt_patch_insns(void *insnbuf, unsigned len,
 			      const char *start, const char *end)
 {
 	unsigned insn_len = end - start;
 
-	/* Alternative instruction is too large for the patch site and we cannot continue: */
-	BUG_ON(insn_len > len || start == NULL);
-
-	memcpy(insn_buff, start, insn_len);
+	if (insn_len > len || start == NULL)
+		insn_len = len;
+	else
+		memcpy(insnbuf, start, insn_len);
 
 	return insn_len;
 }
@@ -370,7 +382,7 @@ struct paravirt_patch_template pv_ops = {
 	.mmu.exit_mmap		= paravirt_nop,
 
 #ifdef CONFIG_PARAVIRT_XXL
-	.mmu.read_cr2		= __PV_IS_CALLEE_SAVE(native_read_cr2),
+	.mmu.read_cr2		= native_read_cr2,
 	.mmu.write_cr2		= native_write_cr2,
 	.mmu.read_cr3		= __native_read_cr3,
 	.mmu.write_cr3		= native_write_cr3,

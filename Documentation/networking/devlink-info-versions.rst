@@ -41,8 +41,3 @@ fw.ncsi
 
 Version of the software responsible for supporting/handling the
 Network Controller Sideband Interface.
-
-fw.psid
-=======
-
-Unique identifier of the firmware parameter set.

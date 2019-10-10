@@ -14,7 +14,7 @@
 #include <asm/ptrace.h>
 #include <uapi/linux/audit.h>
 
-static inline int syscall_get_arch(struct task_struct *task)
+static inline int syscall_get_arch(void)
 {
 	return AUDIT_ARCH_XTENSA;
 }

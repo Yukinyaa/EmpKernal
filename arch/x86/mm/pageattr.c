@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright 2002 Andi Kleen, SuSE Labs.
  * Thanks to Ben LaHaise for precious feedback.
@@ -516,7 +515,7 @@ static inline void check_conflict(int warnlvl, pgprot_t prot, pgprotval_t val,
  */
 static inline pgprot_t static_protections(pgprot_t prot, unsigned long start,
 					  unsigned long pfn, unsigned long npg,
-					  unsigned long lpsize, int warnlvl)
+					  int warnlvl)
 {
 	pgprotval_t forbidden, res;
 	unsigned long end;
@@ -535,17 +534,9 @@ static inline pgprot_t static_protections(pgprot_t prot, unsigned long start,
 	check_conflict(warnlvl, prot, res, start, end, pfn, "Text NX");
 	forbidden = res;
 
-	/*
-	 * Special case to preserve a large page. If the change spawns the
-	 * full large page mapping then there is no point to split it
-	 * up. Happens with ftrace and is going to be removed once ftrace
-	 * switched to text_poke().
-	 */
-	if (lpsize != (npg * PAGE_SIZE) || (start & (lpsize - 1))) {
-		res = protect_kernel_text_ro(start, end);
-		check_conflict(warnlvl, prot, res, start, end, pfn, "Text RO");
-		forbidden |= res;
-	}
+	res = protect_kernel_text_ro(start, end);
+	check_conflict(warnlvl, prot, res, start, end, pfn, "Text RO");
+	forbidden |= res;
 
 	/* Check the PFN directly */
 	res = protect_pci_bios(pfn, pfn + npg - 1);
@@ -827,7 +818,7 @@ static int __should_split_large_page(pte_t *kpte, unsigned long address,
 	 * extra conditional required here.
 	 */
 	chk_prot = static_protections(old_prot, lpaddr, old_pfn, numpages,
-				      psize, CPA_CONFLICT);
+				      CPA_CONFLICT);
 
 	if (WARN_ON_ONCE(pgprot_val(chk_prot) != pgprot_val(old_prot))) {
 		/*
@@ -863,7 +854,7 @@ static int __should_split_large_page(pte_t *kpte, unsigned long address,
 	 * protection requirement in the large page.
 	 */
 	new_prot = static_protections(req_prot, lpaddr, old_pfn, numpages,
-				      psize, CPA_DETECT);
+				      CPA_DETECT);
 
 	/*
 	 * If there is a conflict, split the large page.
@@ -914,8 +905,7 @@ static void split_set_pte(struct cpa_data *cpa, pte_t *pte, unsigned long pfn,
 	if (!cpa->force_static_prot)
 		goto set;
 
-	/* Hand in lpsize = 0 to enforce the protection mechanism */
-	prot = static_protections(ref_prot, address, pfn, npg, 0, CPA_PROTECT);
+	prot = static_protections(ref_prot, address, pfn, npg, CPA_PROTECT);
 
 	if (pgprot_val(prot) == pgprot_val(ref_prot))
 		goto set;
@@ -1512,8 +1502,7 @@ repeat:
 		pgprot_val(new_prot) |= pgprot_val(cpa->mask_set);
 
 		cpa_inc_4k_install();
-		/* Hand in lpsize = 0 to enforce the protection mechanism */
-		new_prot = static_protections(new_prot, address, pfn, 1, 0,
+		new_prot = static_protections(new_prot, address, pfn, 1,
 					      CPA_PROTECT);
 
 		new_prot = pgprot_clear_protnone_bits(new_prot);
@@ -2220,6 +2209,8 @@ int set_pages_rw(struct page *page, int numpages)
 	return set_memory_rw(addr, numpages);
 }
 
+#ifdef CONFIG_DEBUG_PAGEALLOC
+
 static int __set_pages_p(struct page *page, int numpages)
 {
 	unsigned long tempaddr = (unsigned long) page_address(page);
@@ -2258,16 +2249,6 @@ static int __set_pages_np(struct page *page, int numpages)
 	return __change_page_attr_set_clr(&cpa, 0);
 }
 
-int set_direct_map_invalid_noflush(struct page *page)
-{
-	return __set_pages_np(page, 1);
-}
-
-int set_direct_map_default_noflush(struct page *page)
-{
-	return __set_pages_p(page, 1);
-}
-
 void __kernel_map_pages(struct page *page, int numpages, int enable)
 {
 	if (PageHighMem(page))
@@ -2301,6 +2282,7 @@ void __kernel_map_pages(struct page *page, int numpages, int enable)
 }
 
 #ifdef CONFIG_HIBERNATION
+
 bool kernel_page_present(struct page *page)
 {
 	unsigned int level;
@@ -2312,7 +2294,10 @@ bool kernel_page_present(struct page *page)
 	pte = lookup_address((unsigned long)page_address(page), &level);
 	return (pte_val(*pte) & _PAGE_PRESENT);
 }
+
 #endif /* CONFIG_HIBERNATION */
+
+#endif /* CONFIG_DEBUG_PAGEALLOC */
 
 int __init kernel_map_pages_in_pgd(pgd_t *pgd, u64 pfn, unsigned long address,
 				   unsigned numpages, unsigned long page_flags)

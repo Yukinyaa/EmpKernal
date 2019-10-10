@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * TXx9 ACLC AC97 driver
  *
@@ -6,6 +5,10 @@
  *
  * Based on RBTX49xx patch from CELF patch archive.
  * (C) Copyright TOSHIBA CORPORATION 2004-2006
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/init.h>
@@ -99,6 +102,7 @@ static void txx9aclc_ac97_cold_reset(struct snd_ac97 *ac97)
 	u32 ready = ACINT_CODECRDY(ac97->num) | ACINT_REGACCRDY;
 
 	__raw_writel(ACCTL_ENLINK, base + ACCTLDIS);
+	mmiowb();
 	udelay(1);
 	__raw_writel(ACCTL_ENLINK, base + ACCTLEN);
 	/* wait for primary codec ready status */

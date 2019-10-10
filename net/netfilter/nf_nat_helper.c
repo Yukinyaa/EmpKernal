@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* nf_nat_helper.c - generic support functions for NAT helpers
  *
  * (C) 2000-2002 Harald Welte <laforge@netfilter.org>
  * (C) 2003-2006 Netfilter Core Team <coreteam@netfilter.org>
  * (C) 2007-2012 Patrick McHardy <kaber@trash.net>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 #include <linux/module.h>
 #include <linux/gfp.h>
@@ -95,7 +98,7 @@ bool __nf_nat_mangle_tcp_packet(struct sk_buff *skb,
 	struct tcphdr *tcph;
 	int oldlen, datalen;
 
-	if (skb_ensure_writable(skb, skb->len))
+	if (!skb_make_writable(skb, skb->len))
 		return false;
 
 	if (rep_len > match_len &&
@@ -145,7 +148,7 @@ nf_nat_mangle_udp_packet(struct sk_buff *skb,
 	struct udphdr *udph;
 	int datalen, oldlen;
 
-	if (skb_ensure_writable(skb, skb->len))
+	if (!skb_make_writable(skb, skb->len))
 		return false;
 
 	if (rep_len > match_len &&
@@ -167,7 +170,7 @@ nf_nat_mangle_udp_packet(struct sk_buff *skb,
 	if (!udph->check && skb->ip_summed != CHECKSUM_PARTIAL)
 		return true;
 
-	nf_nat_csum_recalc(skb, nf_ct_l3num(ct), IPPROTO_UDP,
+	nf_nat_csum_recalc(skb, nf_ct_l3num(ct), IPPROTO_TCP,
 			   udph, &udph->check, datalen, oldlen);
 
 	return true;

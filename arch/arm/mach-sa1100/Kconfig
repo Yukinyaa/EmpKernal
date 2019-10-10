@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 if ARCH_SA1100
 
 menu "SA11x0 Implementations"

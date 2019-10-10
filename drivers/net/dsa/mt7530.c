@@ -1,7 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Mediatek MT7530 DSA Switch driver
  * Copyright (C) 2017 Sean Wang <sean.wang@mediatek.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 #include <linux/etherdevice.h>
 #include <linux/if_bridge.h>
@@ -428,47 +436,23 @@ static int
 mt7530_pad_clk_setup(struct dsa_switch *ds, int mode)
 {
 	struct mt7530_priv *priv = ds->priv;
-	u32 ncpo1, ssc_delta, trgint, i, xtal;
-
-	xtal = mt7530_read(priv, MT7530_MHWTRAP) & HWTRAP_XTAL_MASK;
-
-	if (xtal == HWTRAP_XTAL_20MHZ) {
-		dev_err(priv->dev,
-			"%s: MT7530 with a 20MHz XTAL is not supported!\n",
-			__func__);
-		return -EINVAL;
-	}
+	u32 ncpo1, ssc_delta, trgint, i;
 
 	switch (mode) {
 	case PHY_INTERFACE_MODE_RGMII:
 		trgint = 0;
-		/* PLL frequency: 125MHz */
 		ncpo1 = 0x0c80;
+		ssc_delta = 0x87;
 		break;
 	case PHY_INTERFACE_MODE_TRGMII:
 		trgint = 1;
-		if (priv->id == ID_MT7621) {
-			/* PLL frequency: 150MHz: 1.2GBit */
-			if (xtal == HWTRAP_XTAL_40MHZ)
-				ncpo1 = 0x0780;
-			if (xtal == HWTRAP_XTAL_25MHZ)
-				ncpo1 = 0x0a00;
-		} else { /* PLL frequency: 250MHz: 2.0Gbit */
-			if (xtal == HWTRAP_XTAL_40MHZ)
-				ncpo1 = 0x0c80;
-			if (xtal == HWTRAP_XTAL_25MHZ)
-				ncpo1 = 0x1400;
-		}
+		ncpo1 = 0x1400;
+		ssc_delta = 0x57;
 		break;
 	default:
 		dev_err(priv->dev, "xMII mode %d not supported\n", mode);
 		return -EINVAL;
 	}
-
-	if (xtal == HWTRAP_XTAL_25MHZ)
-		ssc_delta = 0x57;
-	else
-		ssc_delta = 0x87;
 
 	mt7530_rmw(priv, MT7530_P6ECR, P6_INTF_MODE_MASK,
 		   P6_INTF_MODE(trgint));
@@ -531,9 +515,7 @@ mt7530_pad_clk_setup(struct dsa_switch *ds, int mode)
 			mt7530_rmw(priv, MT7530_TRGMII_RD(i),
 				   RD_TAP_MASK, RD_TAP(16));
 	else
-		if (priv->id != ID_MT7621)
-			mt7623_trgmii_set(priv, GSW_INTF_MODE,
-					  INTF_MODE_TRGMII);
+		mt7623_trgmii_set(priv, GSW_INTF_MODE, INTF_MODE_TRGMII);
 
 	return 0;
 }
@@ -639,13 +621,13 @@ static void mt7530_adjust_link(struct dsa_switch *ds, int port,
 	struct mt7530_priv *priv = ds->priv;
 
 	if (phy_is_pseudo_fixed_link(phydev)) {
-		dev_dbg(priv->dev, "phy-mode for master device = %x\n",
-			phydev->interface);
-
-		/* Setup TX circuit incluing relevant PAD and driving */
-		mt7530_pad_clk_setup(ds, phydev->interface);
-
 		if (priv->id == ID_MT7530) {
+			dev_dbg(priv->dev, "phy-mode for master device = %x\n",
+				phydev->interface);
+
+			/* Setup TX circuit incluing relevant PAD and driving */
+			mt7530_pad_clk_setup(ds, phydev->interface);
+
 			/* Setup RX circuit, relevant PAD and driving on the
 			 * host which must be placed after the setup on the
 			 * device side is all finished.
@@ -846,9 +828,11 @@ mt7530_port_set_vlan_unaware(struct dsa_switch *ds, int port)
 	mt7530_rmw(priv, MT7530_PVC_P(port), VLAN_ATTR_MASK,
 		   VLAN_ATTR(MT7530_VLAN_TRANSPARENT));
 
+	priv->ports[port].vlan_filtering = false;
+
 	for (i = 0; i < MT7530_NUM_PORTS; i++) {
 		if (dsa_is_user_port(ds, i) &&
-		    dsa_port_is_vlan_filtering(&ds->ports[i])) {
+		    priv->ports[i].vlan_filtering) {
 			all_user_ports_removed = false;
 			break;
 		}
@@ -907,8 +891,8 @@ mt7530_port_bridge_leave(struct dsa_switch *ds, int port,
 		 * And the other port's port matrix cannot be broken when the
 		 * other port is still a VLAN-aware port.
 		 */
-		if (dsa_is_user_port(ds, i) && i != port &&
-		   !dsa_port_is_vlan_filtering(&ds->ports[i])) {
+		if (!priv->ports[i].vlan_filtering &&
+		    dsa_is_user_port(ds, i) && i != port) {
 			if (dsa_to_port(ds, i)->bridge_dev != bridge)
 				continue;
 			if (priv->ports[i].enable)
@@ -925,6 +909,8 @@ mt7530_port_bridge_leave(struct dsa_switch *ds, int port,
 		mt7530_rmw(priv, MT7530_PCR_P(port), PCR_MATRIX_MASK,
 			   PCR_MATRIX(BIT(MT7530_CPU_PORT)));
 	priv->ports[port].pm = PCR_MATRIX(BIT(MT7530_CPU_PORT));
+
+	mt7530_port_set_vlan_unaware(ds, port);
 
 	mutex_unlock(&priv->reg_mutex);
 }
@@ -1027,6 +1013,10 @@ static int
 mt7530_port_vlan_filtering(struct dsa_switch *ds, int port,
 			   bool vlan_filtering)
 {
+	struct mt7530_priv *priv = ds->priv;
+
+	priv->ports[port].vlan_filtering = vlan_filtering;
+
 	if (vlan_filtering) {
 		/* The port is being kept as VLAN-unaware port when bridge is
 		 * set up with vlan_filtering not being set, Otherwise, the
@@ -1035,8 +1025,6 @@ mt7530_port_vlan_filtering(struct dsa_switch *ds, int port,
 		 */
 		mt7530_port_set_vlan_aware(ds, port);
 		mt7530_port_set_vlan_aware(ds, MT7530_CPU_PORT);
-	} else {
-		mt7530_port_set_vlan_unaware(ds, port);
 	}
 
 	return 0;
@@ -1151,7 +1139,7 @@ mt7530_port_vlan_add(struct dsa_switch *ds, int port,
 	/* The port is kept as VLAN-unaware if bridge with vlan_filtering not
 	 * being set.
 	 */
-	if (!dsa_port_is_vlan_filtering(&ds->ports[port]))
+	if (!priv->ports[port].vlan_filtering)
 		return;
 
 	mutex_lock(&priv->reg_mutex);
@@ -1182,7 +1170,7 @@ mt7530_port_vlan_del(struct dsa_switch *ds, int port,
 	/* The port is kept as VLAN-unaware if bridge with vlan_filtering not
 	 * being set.
 	 */
-	if (!dsa_port_is_vlan_filtering(&ds->ports[port]))
+	if (!priv->ports[port].vlan_filtering)
 		return 0;
 
 	mutex_lock(&priv->reg_mutex);

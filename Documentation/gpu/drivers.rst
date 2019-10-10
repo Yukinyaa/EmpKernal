@@ -7,7 +7,6 @@ GPU Driver Documentation
    amdgpu
    amdgpu-dc
    i915
-   mcde
    meson
    pl111
    tegra

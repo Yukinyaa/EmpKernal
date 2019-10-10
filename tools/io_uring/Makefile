@@ -8,7 +8,7 @@ all: io_uring-cp io_uring-bench
 	$(CC) $(CFLAGS) -o $@ $^
 
 io_uring-bench: syscall.o io_uring-bench.o
-	$(CC) $(CFLAGS) -o $@ $^ $(LDLIBS)
+	$(CC) $(CFLAGS) $(LDLIBS) -o $@ $^
 
 io_uring-cp: setup.o syscall.o queue.o
 

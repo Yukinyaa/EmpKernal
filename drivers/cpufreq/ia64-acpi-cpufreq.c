@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * This file provides the ACPI based P-state support. This
  * module works with generic cpufreq infrastructure. Most of

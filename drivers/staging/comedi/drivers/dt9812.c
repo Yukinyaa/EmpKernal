@@ -835,8 +835,11 @@ static void dt9812_detach(struct comedi_device *dev)
 	if (!devpriv)
 		return;
 
-	mutex_destroy(&devpriv->mut);
+	mutex_lock(&devpriv->mut);
+
 	usb_set_intfdata(intf, NULL);
+
+	mutex_unlock(&devpriv->mut);
 }
 
 static struct comedi_driver dt9812_driver = {

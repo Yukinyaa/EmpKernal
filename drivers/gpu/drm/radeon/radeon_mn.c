@@ -31,7 +31,7 @@
 #include <linux/firmware.h>
 #include <linux/module.h>
 #include <linux/mmu_notifier.h>
-
+#include <drm/drmP.h>
 #include <drm/drm.h>
 
 #include "radeon.h"
@@ -133,7 +133,7 @@ static int radeon_mn_invalidate_range_start(struct mmu_notifier *mn,
 	/* TODO we should be able to split locking for interval tree and
 	 * the tear down.
 	 */
-	if (mmu_notifier_range_blockable(range))
+	if (range->blockable)
 		mutex_lock(&rmn->lock);
 	else if (!mutex_trylock(&rmn->lock))
 		return -EAGAIN;
@@ -144,7 +144,7 @@ static int radeon_mn_invalidate_range_start(struct mmu_notifier *mn,
 		struct radeon_bo *bo;
 		long r;
 
-		if (!mmu_notifier_range_blockable(range)) {
+		if (!range->blockable) {
 			ret = -EAGAIN;
 			goto out_unlock;
 		}

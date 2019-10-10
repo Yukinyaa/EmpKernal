@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * builtin-top.c
  *
@@ -15,6 +14,8 @@
  *   Wu Fengguang <fengguang.wu@intel.com>
  *   Mike Galbraith <efault@gmx.de>
  *   Paul Mackerras <paulus@samba.org>
+ *
+ * Released under the GPL v2. (and only v2, not any later version)
  */
 #include "builtin.h"
 
@@ -40,7 +41,6 @@
 #include "util/cpumap.h"
 #include "util/xyarray.h"
 #include "util/sort.h"
-#include "util/string2.h"
 #include "util/term.h"
 #include "util/intlist.h"
 #include "util/parse-branch-options.h"
@@ -76,7 +76,7 @@
 #include <linux/time64.h>
 #include <linux/types.h>
 
-#include <linux/ctype.h>
+#include "sane_ctype.h"
 
 static volatile int done;
 static volatile int resize;
@@ -101,7 +101,7 @@ static void perf_top__resize(struct perf_top *top)
 
 static int perf_top__parse_source(struct perf_top *top, struct hist_entry *he)
 {
-	struct perf_evsel *evsel;
+	struct perf_evsel *evsel = hists_to_evsel(he->hists);
 	struct symbol *sym;
 	struct annotation *notes;
 	struct map *map;
@@ -109,8 +109,6 @@ static int perf_top__parse_source(struct perf_top *top, struct hist_entry *he)
 
 	if (!he || !he->ms.sym)
 		return -1;
-
-	evsel = hists_to_evsel(he->hists);
 
 	sym = he->ms.sym;
 	map = he->ms.map;
@@ -228,15 +226,13 @@ static void perf_top__record_precise_ip(struct perf_top *top,
 static void perf_top__show_details(struct perf_top *top)
 {
 	struct hist_entry *he = top->sym_filter_entry;
-	struct perf_evsel *evsel;
+	struct perf_evsel *evsel = hists_to_evsel(he->hists);
 	struct annotation *notes;
 	struct symbol *symbol;
 	int more;
 
 	if (!he)
 		return;
-
-	evsel = hists_to_evsel(he->hists);
 
 	symbol = he->ms.sym;
 	notes = symbol__annotation(symbol);
@@ -1212,14 +1208,11 @@ static int __cmd_top(struct perf_top *top)
 
 	init_process_thread(top);
 
-	if (opts->record_namespaces)
-		top->tool.namespace_events = true;
-
 	ret = perf_event__synthesize_bpf_events(top->session, perf_event__process,
 						&top->session->machines.host,
 						&top->record_opts);
 	if (ret < 0)
-		pr_debug("Couldn't synthesize BPF events: Pre-existing BPF programs won't have symbols resolved.\n");
+		pr_warning("Couldn't synthesize bpf events.\n");
 
 	machine__synthesize_threads(&top->session->machines.host, &opts->target,
 				    top->evlist->threads, false,
@@ -1507,8 +1500,6 @@ int cmd_top(int argc, const char **argv)
 	OPT_BOOLEAN(0, "force", &symbol_conf.force, "don't complain, do it"),
 	OPT_UINTEGER(0, "num-thread-synthesize", &top.nr_threads_synthesize,
 			"number of thread to run event synthesize"),
-	OPT_BOOLEAN(0, "namespaces", &opts->record_namespaces,
-		    "Record namespaces events"),
 	OPT_END()
 	};
 	struct perf_evlist *sb_evlist = NULL;

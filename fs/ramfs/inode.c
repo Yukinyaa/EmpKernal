@@ -266,8 +266,12 @@ static struct file_system_type ramfs_fs_type = {
 	.fs_flags	= FS_USERNS_MOUNT,
 };
 
-static int __init init_ramfs_fs(void)
+int __init init_ramfs_fs(void)
 {
+	static unsigned long once;
+
+	if (test_and_set_bit(0, &once))
+		return 0;
 	return register_filesystem(&ramfs_fs_type);
 }
 fs_initcall(init_ramfs_fs);

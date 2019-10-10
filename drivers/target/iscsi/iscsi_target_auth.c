@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*******************************************************************************
  * This file houses the main functions for the iSCSI CHAP support
  *
@@ -6,6 +5,15 @@
  *
  * Author: Nicholas A. Bellinger <nab@linux-iscsi.org>
  *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  ******************************************************************************/
 
 #include <crypto/hash.h>
@@ -81,12 +89,6 @@ out:
 	return CHAP_DIGEST_UNKNOWN;
 }
 
-static void chap_close(struct iscsi_conn *conn)
-{
-	kfree(conn->auth_protocol);
-	conn->auth_protocol = NULL;
-}
-
 static struct iscsi_chap *chap_server_open(
 	struct iscsi_conn *conn,
 	struct iscsi_node_auth *auth,
@@ -124,7 +126,7 @@ static struct iscsi_chap *chap_server_open(
 	case CHAP_DIGEST_UNKNOWN:
 	default:
 		pr_err("Unsupported CHAP_A value\n");
-		chap_close(conn);
+		kfree(conn->auth_protocol);
 		return NULL;
 	}
 
@@ -139,11 +141,17 @@ static struct iscsi_chap *chap_server_open(
 	 * Generate Challenge.
 	 */
 	if (chap_gen_challenge(conn, 1, aic_str, aic_len) < 0) {
-		chap_close(conn);
+		kfree(conn->auth_protocol);
 		return NULL;
 	}
 
 	return chap;
+}
+
+static void chap_close(struct iscsi_conn *conn)
+{
+	kfree(conn->auth_protocol);
+	conn->auth_protocol = NULL;
 }
 
 static int chap_server_compute_md5(
@@ -244,6 +252,7 @@ static int chap_server_compute_md5(
 	}
 
 	desc->tfm = tfm;
+	desc->flags = 0;
 
 	ret = crypto_shash_init(desc);
 	if (ret < 0) {

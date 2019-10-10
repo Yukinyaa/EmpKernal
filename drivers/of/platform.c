@@ -37,7 +37,7 @@ static const struct of_device_id of_skipped_node_table[] = {
 	{} /* Empty terminated list */
 };
 
-static int of_dev_node_match(struct device *dev, const void *data)
+static int of_dev_node_match(struct device *dev, void *data)
 {
 	return dev->of_node == data;
 }
@@ -92,7 +92,8 @@ static void of_device_make_bus_id(struct device *dev)
 		reg = of_get_property(node, "reg", NULL);
 		if (reg && (addr = of_translate_address(node, reg)) != OF_BAD_ADDR) {
 			dev_set_name(dev, dev_name(dev) ? "%llx.%pOFn:%s" : "%llx.%pOFn",
-				     addr, node, dev_name(dev));
+				     (unsigned long long)addr, node,
+				     dev_name(dev));
 			return;
 		}
 

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * PIKA FPGA based Watchdog Timer
  *
@@ -119,7 +118,7 @@ static int pikawdt_open(struct inode *inode, struct file *file)
 
 	pikawdt_start();
 
-	return stream_open(inode, file);
+	return nonseekable_open(inode, file);
 }
 
 /*

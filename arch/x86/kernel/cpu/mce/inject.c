@@ -1,7 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Machine check injection support.
  * Copyright 2008 Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; version 2
+ * of the License.
  *
  * Authors:
  * Andi Kleen
@@ -11,6 +15,9 @@
  * for testing different aspects of the RAS code. This driver should be
  * built as module so that it can be loaded on production kernels for
  * testing purposes.
+ *
+ * This file may be distributed under the terms of the GNU General Public
+ * License version 2.
  *
  * Copyright (c) 2010-17:  Borislav Petkov <bp@alien8.de>
  *			   Advanced Micro Devices Inc.
@@ -38,6 +45,8 @@
  */
 static struct mce i_mce;
 static struct dentry *dfs_inj;
+
+static u8 n_banks;
 
 #define MAX_FLAG_OPT_SIZE	4
 #define NBCFG			0x44
@@ -519,7 +528,7 @@ static void do_inject(void)
 	 * only on the node base core. Refer to D18F3x44[NbMcaToMstCpuEn] for
 	 * Fam10h and later BKDGs.
 	 */
-	if (boot_cpu_has(X86_FEATURE_AMD_DCM) &&
+	if (static_cpu_has(X86_FEATURE_AMD_DCM) &&
 	    b == 4 &&
 	    boot_cpu_data.x86 < 0x17) {
 		toggle_nb_mca_mst_cpu(amd_get_nb_id(cpu));
@@ -561,15 +570,9 @@ err:
 static int inj_bank_set(void *data, u64 val)
 {
 	struct mce *m = (struct mce *)data;
-	u8 n_banks;
-	u64 cap;
-
-	/* Get bank count on target CPU so we can handle non-uniform values. */
-	rdmsrl_on_cpu(m->extcpu, MSR_IA32_MCG_CAP, &cap);
-	n_banks = cap & MCG_BANKCNT_MASK;
 
 	if (val >= n_banks) {
-		pr_err("MCA bank %llu non-existent on CPU%d\n", val, m->extcpu);
+		pr_err("Non-existent MCE bank: %llu\n", val);
 		return -EINVAL;
 	}
 
@@ -645,6 +648,7 @@ static const struct file_operations readme_fops = {
 
 static struct dfs_node {
 	char *name;
+	struct dentry *d;
 	const struct file_operations *fops;
 	umode_t perm;
 } dfs_fls[] = {
@@ -658,23 +662,53 @@ static struct dfs_node {
 	{ .name = "README",	.fops = &readme_fops, .perm = S_IRUSR | S_IRGRP | S_IROTH },
 };
 
-static void __init debugfs_init(void)
+static int __init debugfs_init(void)
 {
 	unsigned int i;
+	u64 cap;
+
+	rdmsrl(MSR_IA32_MCG_CAP, cap);
+	n_banks = cap & MCG_BANKCNT_MASK;
 
 	dfs_inj = debugfs_create_dir("mce-inject", NULL);
+	if (!dfs_inj)
+		return -EINVAL;
 
-	for (i = 0; i < ARRAY_SIZE(dfs_fls); i++)
-		debugfs_create_file(dfs_fls[i].name, dfs_fls[i].perm, dfs_inj,
-				    &i_mce, dfs_fls[i].fops);
+	for (i = 0; i < ARRAY_SIZE(dfs_fls); i++) {
+		dfs_fls[i].d = debugfs_create_file(dfs_fls[i].name,
+						    dfs_fls[i].perm,
+						    dfs_inj,
+						    &i_mce,
+						    dfs_fls[i].fops);
+
+		if (!dfs_fls[i].d)
+			goto err_dfs_add;
+	}
+
+	return 0;
+
+err_dfs_add:
+	while (i-- > 0)
+		debugfs_remove(dfs_fls[i].d);
+
+	debugfs_remove(dfs_inj);
+	dfs_inj = NULL;
+
+	return -ENODEV;
 }
 
 static int __init inject_init(void)
 {
+	int err;
+
 	if (!alloc_cpumask_var(&mce_inject_cpumask, GFP_KERNEL))
 		return -ENOMEM;
 
-	debugfs_init();
+	err = debugfs_init();
+	if (err) {
+		free_cpumask_var(mce_inject_cpumask);
+		return err;
+	}
 
 	register_nmi_handler(NMI_LOCAL, mce_raise_notify, 0, "mce_notify");
 	mce_register_injector_chain(&inject_nb);

@@ -31,7 +31,6 @@ FILES=                                          \
          test-libpython.bin                     \
          test-libpython-version.bin             \
          test-libslang.bin                      \
-         test-libslang-include-subdir.bin       \
          test-libcrypto.bin                     \
          test-libunwind.bin                     \
          test-libunwind-debug-frame.bin         \
@@ -55,7 +54,6 @@ FILES=                                          \
          test-get_cpuid.bin                     \
          test-sdt.bin                           \
          test-cxx.bin                           \
-         test-gettid.bin			\
          test-jvmti.bin				\
          test-jvmti-cmlr.bin			\
          test-sched_getcpu.bin			\
@@ -64,8 +62,7 @@ FILES=                                          \
          test-clang.bin				\
          test-llvm.bin				\
          test-llvm-version.bin			\
-         test-libaio.bin			\
-         test-libzstd.bin
+         test-libaio.bin
 
 FILES := $(addprefix $(OUTPUT),$(FILES))
 
@@ -183,10 +180,7 @@ $(OUTPUT)test-libaudit.bin:
 	$(BUILD) -laudit
 
 $(OUTPUT)test-libslang.bin:
-	$(BUILD) -lslang
-
-$(OUTPUT)test-libslang-include-subdir.bin:
-	$(BUILD) -lslang
+	$(BUILD) -I/usr/include/slang -lslang
 
 $(OUTPUT)test-libcrypto.bin:
 	$(BUILD) -lcrypto
@@ -272,9 +266,6 @@ $(OUTPUT)test-sdt.bin:
 $(OUTPUT)test-cxx.bin:
 	$(BUILDXX) -std=gnu++11
 
-$(OUTPUT)test-gettid.bin:
-	$(BUILD)
-
 $(OUTPUT)test-jvmti.bin:
 	$(BUILD)
 
@@ -309,9 +300,6 @@ $(OUTPUT)test-clang.bin:
 
 $(OUTPUT)test-libaio.bin:
 	$(BUILD) -lrt
-
-$(OUTPUT)test-libzstd.bin:
-	$(BUILD) -lzstd
 
 ###############################
 

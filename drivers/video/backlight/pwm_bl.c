@@ -1,8 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
- * Simple PWM based backlight control, board code has to setup
+ * linux/drivers/video/backlight/pwm_bl.c
+ *
+ * simple PWM based backlight control, board code has to setup
  * 1) pin configuration so PWM waveforms can output
  * 2) platform_data being correctly configured
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/delay.h>
@@ -150,6 +155,21 @@ static const struct backlight_ops pwm_backlight_ops = {
 #ifdef CONFIG_OF
 #define PWM_LUMINANCE_SCALE	10000 /* luminance scale */
 
+/* An integer based power function */
+static u64 int_pow(u64 base, int exp)
+{
+	u64 result = 1;
+
+	while (exp) {
+		if (exp & 1)
+			result *= base;
+		exp >>= 1;
+		base *= base;
+	}
+
+	return result;
+}
+
 /*
  * CIE lightness to PWM conversion.
  *
@@ -189,17 +209,29 @@ int pwm_backlight_brightness_default(struct device *dev,
 				     struct platform_pwm_backlight_data *data,
 				     unsigned int period)
 {
-	unsigned int i;
+	unsigned int counter = 0;
+	unsigned int i, n;
 	u64 retval;
 
 	/*
-	 * Once we have 4096 levels there's little point going much higher...
-	 * neither interactive sliders nor animation benefits from having
-	 * more values in the table.
+	 * Count the number of bits needed to represent the period number. The
+	 * number of bits is used to calculate the number of levels used for the
+	 * brightness-levels table, the purpose of this calculation is have a
+	 * pre-computed table with enough levels to get linear brightness
+	 * perception. The period is divided by the number of bits so for a
+	 * 8-bit PWM we have 255 / 8 = 32 brightness levels or for a 16-bit PWM
+	 * we have 65535 / 16 = 4096 brightness levels.
+	 *
+	 * Note that this method is based on empirical testing on different
+	 * devices with PWM of 8 and 16 bits of resolution.
 	 */
-	data->max_brightness =
-		min((int)DIV_ROUND_UP(period, fls(period)), 4096);
+	n = period;
+	while (n) {
+		counter += n % 2;
+		n >>= 1;
+	}
 
+	data->max_brightness = DIV_ROUND_UP(period, counter);
 	data->levels = devm_kcalloc(dev, data->max_brightness,
 				    sizeof(*data->levels), GFP_KERNEL);
 	if (!data->levels)
@@ -691,5 +723,5 @@ static struct platform_driver pwm_backlight_driver = {
 module_platform_driver(pwm_backlight_driver);
 
 MODULE_DESCRIPTION("PWM based Backlight Driver");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");
 MODULE_ALIAS("platform:pwm-backlight");

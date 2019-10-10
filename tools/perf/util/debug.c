@@ -7,7 +7,6 @@
 #include <string.h>
 #include <stdarg.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <sys/wait.h>
 #include <api/debug.h>
 #include <linux/time64.h>
@@ -22,7 +21,7 @@
 #include "util.h"
 #include "target.h"
 
-#include <linux/ctype.h>
+#include "sane_ctype.h"
 
 int verbose;
 bool dump_trace = false, quiet = false;

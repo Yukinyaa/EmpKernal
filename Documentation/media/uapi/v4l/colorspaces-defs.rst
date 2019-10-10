@@ -39,7 +39,7 @@ whole range, 0-255, dividing the angular value by 1.41. The enum
    colorspaces except for BT.2020 which uses limited range R'G'B'
    quantization.
 
-.. tabularcolumns:: |p{6.7cm}|p{10.8cm}|
+.. tabularcolumns:: |p{6.0cm}|p{11.5cm}|
 
 .. c:type:: v4l2_colorspace
 
@@ -112,7 +112,7 @@ whole range, 0-255, dividing the angular value by 1.41. The enum
 
 .. c:type:: v4l2_ycbcr_encoding
 
-.. tabularcolumns:: |p{7.2cm}|p{10.3cm}|
+.. tabularcolumns:: |p{6.5cm}|p{11.0cm}|
 
 .. flat-table:: V4L2 Y'CbCr Encodings
     :header-rows:  1

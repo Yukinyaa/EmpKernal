@@ -858,9 +858,6 @@ static inline int idx_from_vl(int vl)
 /* Per device counter indexes */
 enum {
 	C_RCV_OVF = 0,
-	C_RX_LEN_ERR,
-	C_RX_ICRC_ERR,
-	C_RX_EBP,
 	C_RX_TID_FULL,
 	C_RX_TID_INVALID,
 	C_RX_TID_FLGMS,
@@ -1445,7 +1442,6 @@ void clear_all_interrupts(struct hfi1_devdata *dd);
 void remap_intr(struct hfi1_devdata *dd, int isrc, int msix_intr);
 void remap_sdma_interrupts(struct hfi1_devdata *dd, int engine, int msix_intr);
 void reset_interrupts(struct hfi1_devdata *dd);
-u8 hfi1_get_qp_map(struct hfi1_devdata *dd, u8 idx);
 
 /*
  * Interrupt source table.

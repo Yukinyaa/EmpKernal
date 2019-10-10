@@ -201,7 +201,6 @@ static int ls_pcie_msi_host_init(struct pcie_port *pp)
 		return -EINVAL;
 	}
 
-	of_node_put(msi_node);
 	return 0;
 }
 

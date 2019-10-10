@@ -1,9 +1,20 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Based on arch/arm/include/asm/memory.h
  *
  * Copyright (C) 2000-2002 Russell King
  * Copyright (C) 2012 ARM Ltd.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  * Note: this file should not be included by non-asm/.h files
  */
@@ -15,7 +26,7 @@
 #include <linux/types.h>
 #include <asm/bug.h>
 #include <asm/page-def.h>
-#include <linux/sizes.h>
+#include <asm/sizes.h>
 
 /*
  * Size of the PCI I/O space. This must remain a power of two so that
@@ -210,11 +221,7 @@ extern u64			vabits_user;
 #define __tag_reset(addr)	untagged_addr(addr)
 #define __tag_get(addr)		(__u8)((u64)(addr) >> 56)
 #else
-static inline const void *__tag_set(const void *addr, u8 tag)
-{
-	return addr;
-}
-
+#define __tag_set(addr, tag)	(addr)
 #define __tag_reset(addr)	(addr)
 #define __tag_get(addr)		0
 #endif
@@ -295,7 +302,7 @@ static inline void *phys_to_virt(phys_addr_t x)
  */
 #define ARCH_PFN_OFFSET		((unsigned long)PHYS_PFN_OFFSET)
 
-#if !defined(CONFIG_SPARSEMEM_VMEMMAP) || defined(CONFIG_DEBUG_VIRTUAL)
+#ifndef CONFIG_SPARSEMEM_VMEMMAP
 #define virt_to_page(kaddr)	pfn_to_page(__pa(kaddr) >> PAGE_SHIFT)
 #define _virt_addr_valid(kaddr)	pfn_valid(__pa(kaddr) >> PAGE_SHIFT)
 #else
@@ -305,8 +312,8 @@ static inline void *phys_to_virt(phys_addr_t x)
 #define page_to_virt(page)	({					\
 	unsigned long __addr =						\
 		((__page_to_voff(page)) | PAGE_OFFSET);			\
-	const void *__addr_tag =					\
-		__tag_set((void *)__addr, page_kasan_tag(page));	\
+	unsigned long __addr_tag =					\
+		 __tag_set(__addr, page_kasan_tag(page));		\
 	((void *)__addr_tag);						\
 })
 

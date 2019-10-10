@@ -441,7 +441,8 @@ static int dm_blk_getgeo(struct block_device *bdev, struct hd_geometry *geo)
 }
 
 static int dm_blk_report_zones(struct gendisk *disk, sector_t sector,
-			       struct blk_zone *zones, unsigned int *nr_zones)
+			       struct blk_zone *zones, unsigned int *nr_zones,
+			       gfp_t gfp_mask)
 {
 #ifdef CONFIG_BLK_DEV_ZONED
 	struct mapped_device *md = disk->private_data;
@@ -479,7 +480,8 @@ static int dm_blk_report_zones(struct gendisk *disk, sector_t sector,
 	 * So there is no need to loop here trying to fill the entire array
 	 * of zones.
 	 */
-	ret = tgt->type->report_zones(tgt, sector, zones, nr_zones);
+	ret = tgt->type->report_zones(tgt, sector, zones,
+				      nr_zones, gfp_mask);
 
 out:
 	dm_put_live_table(md, srcu_idx);
@@ -779,8 +781,7 @@ static void close_table_device(struct table_device *td, struct mapped_device *md
 }
 
 static struct table_device *find_table_device(struct list_head *l, dev_t dev,
-					      fmode_t mode)
-{
+					      fmode_t mode) {
 	struct table_device *td;
 
 	list_for_each_entry(td, l, list)
@@ -791,8 +792,7 @@ static struct table_device *find_table_device(struct list_head *l, dev_t dev,
 }
 
 int dm_get_table_device(struct mapped_device *md, dev_t dev, fmode_t mode,
-			struct dm_dev **result)
-{
+			struct dm_dev **result) {
 	int r;
 	struct table_device *td;
 
@@ -1100,25 +1100,6 @@ static long dm_dax_direct_access(struct dax_device *dax_dev, pgoff_t pgoff,
 	ret = ti->type->direct_access(ti, pgoff, nr_pages, kaddr, pfn);
 
  out:
-	dm_put_live_table(md, srcu_idx);
-
-	return ret;
-}
-
-static bool dm_dax_supported(struct dax_device *dax_dev, struct block_device *bdev,
-		int blocksize, sector_t start, sector_t len)
-{
-	struct mapped_device *md = dax_get_private(dax_dev);
-	struct dm_table *map;
-	int srcu_idx;
-	bool ret;
-
-	map = dm_get_live_table(md, &srcu_idx);
-	if (!map)
-		return false;
-
-	ret = dm_table_supports_dax(map, device_supports_dax, &blocksize);
-
 	dm_put_live_table(md, srcu_idx);
 
 	return ret;
@@ -1927,6 +1908,7 @@ static void cleanup_mapped_device(struct mapped_device *md)
 static struct mapped_device *alloc_dev(int minor)
 {
 	int r, numa_node_id = dm_get_numa_node();
+	struct dax_device *dax_dev = NULL;
 	struct mapped_device *md;
 	void *old_md;
 
@@ -1989,11 +1971,11 @@ static struct mapped_device *alloc_dev(int minor)
 	sprintf(md->disk->disk_name, "dm-%d", minor);
 
 	if (IS_ENABLED(CONFIG_DAX_DRIVER)) {
-		md->dax_dev = alloc_dax(md, md->disk->disk_name,
-					&dm_dax_ops, 0);
-		if (!md->dax_dev)
+		dax_dev = alloc_dax(md, md->disk->disk_name, &dm_dax_ops);
+		if (!dax_dev)
 			goto bad;
 	}
+	md->dax_dev = dax_dev;
 
 	add_disk_no_queue_reg(md->disk);
 	format_dev_t(md->name, MKDEV(_major, minor));
@@ -3212,7 +3194,6 @@ static const struct block_device_operations dm_blk_dops = {
 
 static const struct dax_operations dm_dax_ops = {
 	.direct_access = dm_dax_direct_access,
-	.dax_supported = dm_dax_supported,
 	.copy_from_iter = dm_dax_copy_from_iter,
 	.copy_to_iter = dm_dax_copy_to_iter,
 };

@@ -427,10 +427,14 @@ static const struct ieee80211_regdomain *
 reg_copy_regd(const struct ieee80211_regdomain *src_regd)
 {
 	struct ieee80211_regdomain *regd;
+	int size_of_regd;
 	unsigned int i;
 
-	regd = kzalloc(struct_size(regd, reg_rules, src_regd->n_reg_rules),
-		       GFP_KERNEL);
+	size_of_regd =
+		sizeof(struct ieee80211_regdomain) +
+		src_regd->n_reg_rules * sizeof(struct ieee80211_reg_rule);
+
+	regd = kzalloc(size_of_regd, GFP_KERNEL);
 	if (!regd)
 		return ERR_PTR(-ENOMEM);
 
@@ -944,10 +948,12 @@ static int regdb_query_country(const struct fwdb_header *db,
 	unsigned int ptr = be16_to_cpu(country->coll_ptr) << 2;
 	struct fwdb_collection *coll = (void *)((u8 *)db + ptr);
 	struct ieee80211_regdomain *regdom;
-	unsigned int i;
+	unsigned int size_of_regd, i;
 
-	regdom = kzalloc(struct_size(regdom, reg_rules, coll->n_rules),
-			 GFP_KERNEL);
+	size_of_regd = sizeof(struct ieee80211_regdomain) +
+		coll->n_rules * sizeof(struct ieee80211_reg_rule);
+
+	regdom = kzalloc(size_of_regd, GFP_KERNEL);
 	if (!regdom)
 		return -ENOMEM;
 
@@ -1483,7 +1489,7 @@ static struct ieee80211_regdomain *
 regdom_intersect(const struct ieee80211_regdomain *rd1,
 		 const struct ieee80211_regdomain *rd2)
 {
-	int r;
+	int r, size_of_regd;
 	unsigned int x, y;
 	unsigned int num_rules = 0;
 	const struct ieee80211_reg_rule *rule1, *rule2;
@@ -1514,7 +1520,10 @@ regdom_intersect(const struct ieee80211_regdomain *rd1,
 	if (!num_rules)
 		return NULL;
 
-	rd = kzalloc(struct_size(rd, reg_rules, num_rules), GFP_KERNEL);
+	size_of_regd = sizeof(struct ieee80211_regdomain) +
+		       num_rules * sizeof(struct ieee80211_reg_rule);
+
+	rd = kzalloc(size_of_regd, GFP_KERNEL);
 	if (!rd)
 		return NULL;
 
@@ -2788,7 +2797,7 @@ static void reg_process_pending_hints(void)
 
 	/* When last_request->processed becomes true this will be rescheduled */
 	if (lr && !lr->processed) {
-		pr_debug("Pending regulatory request, waiting for it to be processed...\n");
+		reg_process_hint(lr);
 		return;
 	}
 

@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * OpenRISC Linux
  *
@@ -10,6 +9,11 @@
  * Copyright (C) 2003 Matjaz Breskvar <phoenix@bsemi.com>
  * Copyright (C) 2010-2011 Jonas Bonn <jonas@southpole.se>
  * et al.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  */
 
 #ifndef __ASM_OPENRISC_SYSCALL_H__
@@ -64,7 +68,7 @@ syscall_set_arguments(struct task_struct *task, struct pt_regs *regs,
 	memcpy(&regs->gpr[3], args, 6 * sizeof(args[0]));
 }
 
-static inline int syscall_get_arch(struct task_struct *task)
+static inline int syscall_get_arch(void)
 {
 	return AUDIT_ARCH_OPENRISC;
 }

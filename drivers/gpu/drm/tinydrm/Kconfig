@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 menuconfig DRM_TINYDRM
 	tristate "Support for simple displays"
 	depends on DRM

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/fs/ext2/super.c
  *
@@ -193,9 +192,15 @@ static struct inode *ext2_alloc_inode(struct super_block *sb)
 	return &ei->vfs_inode;
 }
 
-static void ext2_free_in_core_inode(struct inode *inode)
+static void ext2_i_callback(struct rcu_head *head)
 {
+	struct inode *inode = container_of(head, struct inode, i_rcu);
 	kmem_cache_free(ext2_inode_cachep, EXT2_I(inode));
+}
+
+static void ext2_destroy_inode(struct inode *inode)
+{
+	call_rcu(&inode->i_rcu, ext2_i_callback);
 }
 
 static void init_once(void *foo)
@@ -303,16 +308,16 @@ static int ext2_show_options(struct seq_file *seq, struct dentry *root)
 	if (test_opt(sb, NOBH))
 		seq_puts(seq, ",nobh");
 
-	if (test_opt(sb, USRQUOTA))
+	if (sbi->s_mount_opt & EXT2_MOUNT_USRQUOTA)
 		seq_puts(seq, ",usrquota");
 
-	if (test_opt(sb, GRPQUOTA))
+	if (sbi->s_mount_opt & EXT2_MOUNT_GRPQUOTA)
 		seq_puts(seq, ",grpquota");
 
-	if (test_opt(sb, XIP))
+	if (sbi->s_mount_opt & EXT2_MOUNT_XIP)
 		seq_puts(seq, ",xip");
 
-	if (test_opt(sb, DAX))
+	if (sbi->s_mount_opt & EXT2_MOUNT_DAX)
 		seq_puts(seq, ",dax");
 
 	if (!test_opt(sb, RESERVATION))
@@ -346,7 +351,7 @@ static const struct quotactl_ops ext2_quotactl_ops = {
 
 static const struct super_operations ext2_sops = {
 	.alloc_inode	= ext2_alloc_inode,
-	.free_inode	= ext2_free_in_core_inode,
+	.destroy_inode	= ext2_destroy_inode,
 	.write_inode	= ext2_write_inode,
 	.evict_inode	= ext2_evict_inode,
 	.put_super	= ext2_put_super,
@@ -935,7 +940,8 @@ static int ext2_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->s_resgid = opts.s_resgid;
 
 	sb->s_flags = (sb->s_flags & ~SB_POSIXACL) |
-		(test_opt(sb, POSIX_ACL) ? SB_POSIXACL : 0);
+		((EXT2_SB(sb)->s_mount_opt & EXT2_MOUNT_POSIX_ACL) ?
+		 SB_POSIXACL : 0);
 	sb->s_iflags |= SB_I_CGROUPWB;
 
 	if (le32_to_cpu(es->s_rev_level) == EXT2_GOOD_OLD_REV &&
@@ -966,11 +972,11 @@ static int ext2_fill_super(struct super_block *sb, void *data, int silent)
 
 	blocksize = BLOCK_SIZE << le32_to_cpu(sbi->s_es->s_log_block_size);
 
-	if (test_opt(sb, DAX)) {
+	if (sbi->s_mount_opt & EXT2_MOUNT_DAX) {
 		if (!bdev_dax_supported(sb->s_bdev, blocksize)) {
 			ext2_msg(sb, KERN_ERR,
 				"DAX unsupported by block device. Turning off DAX.");
-			clear_opt(sbi->s_mount_opt, DAX);
+			sbi->s_mount_opt &= ~EXT2_MOUNT_DAX;
 		}
 	}
 
@@ -1403,7 +1409,7 @@ out_set:
 	sbi->s_resuid = new_opts.s_resuid;
 	sbi->s_resgid = new_opts.s_resgid;
 	sb->s_flags = (sb->s_flags & ~SB_POSIXACL) |
-		(test_opt(sb, POSIX_ACL) ? SB_POSIXACL : 0);
+		((sbi->s_mount_opt & EXT2_MOUNT_POSIX_ACL) ? SB_POSIXACL : 0);
 	spin_unlock(&sbi->s_lock);
 
 	return 0;

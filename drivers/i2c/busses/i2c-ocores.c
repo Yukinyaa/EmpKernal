@@ -26,6 +26,8 @@
 #include <linux/spinlock.h>
 #include <linux/jiffies.h>
 
+#define OCORES_FLAG_POLL BIT(0)
+
 /*
  * 'process_lock' exists because ocores_process() and ocores_process_timeout()
  * can't run in parallel.
@@ -83,9 +85,6 @@ struct ocores_i2c {
 
 #define TYPE_OCORES		0
 #define TYPE_GRLIB		1
-#define TYPE_SIFIVE_REV0	2
-
-#define OCORES_FLAG_BROKEN_IRQ BIT(1) /* Broken IRQ for FU540-C000 SoC */
 
 static void oc_setreg_8(struct ocores_i2c *i2c, int reg, u8 value)
 {
@@ -239,12 +238,9 @@ static irqreturn_t ocores_isr(int irq, void *dev_id)
 	struct ocores_i2c *i2c = dev_id;
 	u8 stat = oc_getreg(i2c, OCI2C_STATUS);
 
-	if (i2c->flags & OCORES_FLAG_BROKEN_IRQ) {
-		if ((stat & OCI2C_STAT_IF) && !(stat & OCI2C_STAT_BUSY))
-			return IRQ_NONE;
-	} else if (!(stat & OCI2C_STAT_IF)) {
+	if (!(stat & OCI2C_STAT_IF))
 		return IRQ_NONE;
-	}
+
 	ocores_process(i2c, stat);
 
 	return IRQ_HANDLED;
@@ -359,11 +355,6 @@ static void ocores_process_polling(struct ocores_i2c *i2c)
 		ret = ocores_isr(-1, i2c);
 		if (ret == IRQ_NONE)
 			break; /* all messages have been transferred */
-		else {
-			if (i2c->flags & OCORES_FLAG_BROKEN_IRQ)
-				if (i2c->state == STATE_DONE)
-					break;
-		}
 	}
 }
 
@@ -412,7 +403,11 @@ static int ocores_xfer_polling(struct i2c_adapter *adap,
 static int ocores_xfer(struct i2c_adapter *adap,
 		       struct i2c_msg *msgs, int num)
 {
-	return ocores_xfer_core(i2c_get_adapdata(adap), msgs, num, false);
+	struct ocores_i2c *i2c = i2c_get_adapdata(adap);
+
+	if (i2c->flags & OCORES_FLAG_POLL)
+		return ocores_xfer_polling(adap, msgs, num);
+	return ocores_xfer_core(i2c, msgs, num, false);
 }
 
 static int ocores_init(struct device *dev, struct ocores_i2c *i2c)
@@ -452,9 +447,8 @@ static u32 ocores_func(struct i2c_adapter *adap)
 	return I2C_FUNC_I2C | I2C_FUNC_SMBUS_EMUL;
 }
 
-static struct i2c_algorithm ocores_algorithm = {
+static const struct i2c_algorithm ocores_algorithm = {
 	.master_xfer = ocores_xfer,
-	.master_xfer_atomic = ocores_xfer_polling,
 	.functionality = ocores_func,
 };
 
@@ -473,14 +467,6 @@ static const struct of_device_id ocores_i2c_match[] = {
 	{
 		.compatible = "aeroflexgaisler,i2cmst",
 		.data = (void *)TYPE_GRLIB,
-	},
-	{
-		.compatible = "sifive,fu540-c000-i2c",
-		.data = (void *)TYPE_SIFIVE_REV0,
-	},
-	{
-		.compatible = "sifive,i2c0",
-		.data = (void *)TYPE_SIFIVE_REV0,
 	},
 	{},
 };
@@ -606,7 +592,6 @@ static int ocores_i2c_probe(struct platform_device *pdev)
 {
 	struct ocores_i2c *i2c;
 	struct ocores_i2c_platform_data *pdata;
-	const struct of_device_id *match;
 	struct resource *res;
 	int irq;
 	int ret;
@@ -688,21 +673,13 @@ static int ocores_i2c_probe(struct platform_device *pdev)
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq == -ENXIO) {
-		ocores_algorithm.master_xfer = ocores_xfer_polling;
-
-		/*
-		 * Set in OCORES_FLAG_BROKEN_IRQ to enable workaround for
-		 * FU540-C000 SoC in polling mode.
-		 */
-		match = of_match_node(ocores_i2c_match, pdev->dev.of_node);
-		if (match && (long)match->data == TYPE_SIFIVE_REV0)
-			i2c->flags |= OCORES_FLAG_BROKEN_IRQ;
+		i2c->flags |= OCORES_FLAG_POLL;
 	} else {
 		if (irq < 0)
 			return irq;
 	}
 
-	if (ocores_algorithm.master_xfer != ocores_xfer_polling) {
+	if (!(i2c->flags & OCORES_FLAG_POLL)) {
 		ret = devm_request_irq(&pdev->dev, irq, ocores_isr, 0,
 				       pdev->name, i2c);
 		if (ret) {

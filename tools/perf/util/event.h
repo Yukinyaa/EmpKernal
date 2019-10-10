@@ -6,7 +6,6 @@
 #include <stdio.h>
 #include <linux/kernel.h>
 #include <linux/bpf.h>
-#include <linux/perf_event.h>
 
 #include "../perf.h"
 #include "build-id.h"
@@ -204,8 +203,6 @@ struct perf_sample {
 	u64 period;
 	u64 weight;
 	u64 transaction;
-	u64 insn_cnt;
-	u64 cyc_cnt;
 	u32 cpu;
 	u32 raw_size;
 	u64 data_src;
@@ -257,7 +254,6 @@ enum perf_user_event_type { /* above any possible kernel type */
 	PERF_RECORD_EVENT_UPDATE		= 78,
 	PERF_RECORD_TIME_CONV			= 79,
 	PERF_RECORD_HEADER_FEATURE		= 80,
-	PERF_RECORD_COMPRESSED			= 81,
 	PERF_RECORD_HEADER_MAX
 };
 
@@ -630,11 +626,6 @@ struct feature_event {
 	char				data[];
 };
 
-struct compressed_event {
-	struct perf_event_header	header;
-	char				data[];
-};
-
 union perf_event {
 	struct perf_event_header	header;
 	struct mmap_event		mmap;
@@ -668,7 +659,6 @@ union perf_event {
 	struct feature_event		feat;
 	struct ksymbol_event		ksymbol_event;
 	struct bpf_event		bpf_event;
-	struct compressed_event		pack;
 };
 
 void perf_event__print_totals(void);

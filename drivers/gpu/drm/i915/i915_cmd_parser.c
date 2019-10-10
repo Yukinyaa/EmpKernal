@@ -25,9 +25,8 @@
  *
  */
 
-#include "gt/intel_engine.h"
-
 #include "i915_drv.h"
+#include "intel_ringbuffer.h"
 
 /**
  * DOC: batch buffer command parser
@@ -869,8 +868,8 @@ void intel_engine_init_cmd_parser(struct intel_engine_cs *engine)
 	if (!IS_GEN(engine->i915, 7))
 		return;
 
-	switch (engine->class) {
-	case RENDER_CLASS:
+	switch (engine->id) {
+	case RCS:
 		if (IS_HASWELL(engine->i915)) {
 			cmd_tables = hsw_render_ring_cmds;
 			cmd_table_count =
@@ -890,12 +889,12 @@ void intel_engine_init_cmd_parser(struct intel_engine_cs *engine)
 
 		engine->get_cmd_length_mask = gen7_render_get_cmd_length_mask;
 		break;
-	case VIDEO_DECODE_CLASS:
+	case VCS:
 		cmd_tables = gen7_video_cmds;
 		cmd_table_count = ARRAY_SIZE(gen7_video_cmds);
 		engine->get_cmd_length_mask = gen7_bsd_get_cmd_length_mask;
 		break;
-	case COPY_ENGINE_CLASS:
+	case BCS:
 		if (IS_HASWELL(engine->i915)) {
 			cmd_tables = hsw_blt_ring_cmds;
 			cmd_table_count = ARRAY_SIZE(hsw_blt_ring_cmds);
@@ -914,14 +913,14 @@ void intel_engine_init_cmd_parser(struct intel_engine_cs *engine)
 
 		engine->get_cmd_length_mask = gen7_blt_get_cmd_length_mask;
 		break;
-	case VIDEO_ENHANCEMENT_CLASS:
+	case VECS:
 		cmd_tables = hsw_vebox_cmds;
 		cmd_table_count = ARRAY_SIZE(hsw_vebox_cmds);
 		/* VECS can use the same length_mask function as VCS */
 		engine->get_cmd_length_mask = gen7_bsd_get_cmd_length_mask;
 		break;
 	default:
-		MISSING_CASE(engine->class);
+		MISSING_CASE(engine->id);
 		return;
 	}
 
@@ -1058,20 +1057,19 @@ static u32 *copy_batch(struct drm_i915_gem_object *dst_obj,
 	void *dst, *src;
 	int ret;
 
-	ret = i915_gem_object_prepare_write(dst_obj, &dst_needs_clflush);
+	ret = i915_gem_obj_prepare_shmem_read(src_obj, &src_needs_clflush);
 	if (ret)
 		return ERR_PTR(ret);
 
-	dst = i915_gem_object_pin_map(dst_obj, I915_MAP_FORCE_WB);
-	i915_gem_object_finish_access(dst_obj);
-	if (IS_ERR(dst))
-		return dst;
-
-	ret = i915_gem_object_prepare_read(src_obj, &src_needs_clflush);
+	ret = i915_gem_obj_prepare_shmem_write(dst_obj, &dst_needs_clflush);
 	if (ret) {
-		i915_gem_object_unpin_map(dst_obj);
-		return ERR_PTR(ret);
+		dst = ERR_PTR(ret);
+		goto unpin_src;
 	}
+
+	dst = i915_gem_object_pin_map(dst_obj, I915_MAP_FORCE_WB);
+	if (IS_ERR(dst))
+		goto unpin_dst;
 
 	src = ERR_PTR(-ENODEV);
 	if (src_needs_clflush &&
@@ -1117,11 +1115,13 @@ static u32 *copy_batch(struct drm_i915_gem_object *dst_obj,
 		}
 	}
 
-	i915_gem_object_finish_access(src_obj);
-
 	/* dst_obj is returned with vmap pinned */
 	*needs_clflush_after = dst_needs_clflush & CLFLUSH_AFTER;
 
+unpin_dst:
+	i915_gem_obj_finish_shmem_access(dst_obj);
+unpin_src:
+	i915_gem_obj_finish_shmem_access(src_obj);
 	return dst;
 }
 

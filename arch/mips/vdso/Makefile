@@ -46,7 +46,9 @@ endif
 VDSO_LDFLAGS := \
 	-Wl,-Bsymbolic -Wl,--no-undefined -Wl,-soname=linux-vdso.so.1 \
 	$(addprefix -Wl$(comma),$(filter -E%,$(KBUILD_CFLAGS))) \
-	-nostdlib -shared -Wl,--hash-style=sysv -Wl,--build-id
+	-nostdlib -shared \
+	$(call cc-ldoption, -Wl$(comma)--hash-style=sysv) \
+	$(call cc-ldoption, -Wl$(comma)--build-id)
 
 GCOV_PROFILE := n
 UBSAN_SANITIZE := n

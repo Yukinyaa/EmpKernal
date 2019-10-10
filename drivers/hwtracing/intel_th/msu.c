@@ -29,22 +29,28 @@
 #define msc_dev(x) (&(x)->thdev->dev)
 
 /**
+ * struct msc_block - multiblock mode block descriptor
+ * @bdesc:	pointer to hardware descriptor (beginning of the block)
+ * @addr:	physical address of the block
+ */
+struct msc_block {
+	struct msc_block_desc	*bdesc;
+	dma_addr_t		addr;
+};
+
+/**
  * struct msc_window - multiblock mode window descriptor
  * @entry:	window list linkage (msc::win_list)
  * @pgoff:	page offset into the buffer that this window starts at
  * @nr_blocks:	number of blocks (pages) in this window
- * @nr_segs:	number of segments in this window (<= @nr_blocks)
- * @_sgt:	array of block descriptors
- * @sgt:	array of block descriptors
+ * @block:	array of block descriptors
  */
 struct msc_window {
 	struct list_head	entry;
 	unsigned long		pgoff;
 	unsigned int		nr_blocks;
-	unsigned int		nr_segs;
 	struct msc		*msc;
-	struct sg_table		_sgt;
-	struct sg_table		*sgt;
+	struct msc_block	block[0];
 };
 
 /**
@@ -79,7 +85,6 @@ struct msc_iter {
  * @thdev:		intel_th_device pointer
  * @win_list:		list of windows in multiblock mode
  * @single_sgt:		single mode buffer
- * @cur_win:		current window
  * @nr_pages:		total number of pages allocated for this buffer
  * @single_sz:		amount of data in single mode
  * @single_wrap:	single mode wrap occurred
@@ -97,12 +102,10 @@ struct msc_iter {
  */
 struct msc {
 	void __iomem		*reg_base;
-	void __iomem		*msu_base;
 	struct intel_th_device	*thdev;
 
 	struct list_head	win_list;
 	struct sg_table		single_sgt;
-	struct msc_window	*cur_win;
 	unsigned long		nr_pages;
 	unsigned long		single_sz;
 	unsigned int		single_wrap : 1;
@@ -119,8 +122,7 @@ struct msc {
 
 	/* config */
 	unsigned int		enabled : 1,
-				wrap	: 1,
-				do_irq	: 1;
+				wrap	: 1;
 	unsigned int		mode;
 	unsigned int		burst_len;
 	unsigned int		index;
@@ -139,28 +141,72 @@ static inline bool msc_block_is_empty(struct msc_block_desc *bdesc)
 	return false;
 }
 
-static inline struct msc_block_desc *
-msc_win_block(struct msc_window *win, unsigned int block)
+/**
+ * msc_oldest_window() - locate the window with oldest data
+ * @msc:	MSC device
+ *
+ * This should only be used in multiblock mode. Caller should hold the
+ * msc::user_count reference.
+ *
+ * Return:	the oldest window with valid data
+ */
+static struct msc_window *msc_oldest_window(struct msc *msc)
 {
-	return sg_virt(&win->sgt->sgl[block]);
+	struct msc_window *win;
+	u32 reg = ioread32(msc->reg_base + REG_MSU_MSC0NWSA);
+	unsigned long win_addr = (unsigned long)reg << PAGE_SHIFT;
+	unsigned int found = 0;
+
+	if (list_empty(&msc->win_list))
+		return NULL;
+
+	/*
+	 * we might need a radix tree for this, depending on how
+	 * many windows a typical user would allocate; ideally it's
+	 * something like 2, in which case we're good
+	 */
+	list_for_each_entry(win, &msc->win_list, entry) {
+		if (win->block[0].addr == win_addr)
+			found++;
+
+		/* skip the empty ones */
+		if (msc_block_is_empty(win->block[0].bdesc))
+			continue;
+
+		if (found)
+			return win;
+	}
+
+	return list_entry(msc->win_list.next, struct msc_window, entry);
 }
 
-static inline size_t
-msc_win_actual_bsz(struct msc_window *win, unsigned int block)
+/**
+ * msc_win_oldest_block() - locate the oldest block in a given window
+ * @win:	window to look at
+ *
+ * Return:	index of the block with the oldest data
+ */
+static unsigned int msc_win_oldest_block(struct msc_window *win)
 {
-	return win->sgt->sgl[block].length;
-}
+	unsigned int blk;
+	struct msc_block_desc *bdesc = win->block[0].bdesc;
 
-static inline dma_addr_t
-msc_win_baddr(struct msc_window *win, unsigned int block)
-{
-	return sg_dma_address(&win->sgt->sgl[block]);
-}
+	/* without wrapping, first block is the oldest */
+	if (!msc_block_wrapped(bdesc))
+		return 0;
 
-static inline unsigned long
-msc_win_bpfn(struct msc_window *win, unsigned int block)
-{
-	return msc_win_baddr(win, block) >> PAGE_SHIFT;
+	/*
+	 * with wrapping, last written block contains both the newest and the
+	 * oldest data for this window.
+	 */
+	for (blk = 0; blk < win->nr_blocks; blk++) {
+		bdesc = win->block[blk].bdesc;
+
+		if (msc_block_last_written(bdesc))
+			return blk;
+	}
+
+	return 0;
 }
 
 /**
@@ -182,105 +228,15 @@ static inline bool msc_is_last_win(struct msc_window *win)
 static struct msc_window *msc_next_window(struct msc_window *win)
 {
 	if (msc_is_last_win(win))
-		return list_first_entry(&win->msc->win_list, struct msc_window,
-					entry);
+		return list_entry(win->msc->win_list.next, struct msc_window,
+				  entry);
 
-	return list_next_entry(win, entry);
-}
-
-/**
- * msc_find_window() - find a window matching a given sg_table
- * @msc:	MSC device
- * @sgt:	SG table of the window
- * @nonempty:	skip over empty windows
- *
- * Return:	MSC window structure pointer or NULL if the window
- *		could not be found.
- */
-static struct msc_window *
-msc_find_window(struct msc *msc, struct sg_table *sgt, bool nonempty)
-{
-	struct msc_window *win;
-	unsigned int found = 0;
-
-	if (list_empty(&msc->win_list))
-		return NULL;
-
-	/*
-	 * we might need a radix tree for this, depending on how
-	 * many windows a typical user would allocate; ideally it's
-	 * something like 2, in which case we're good
-	 */
-	list_for_each_entry(win, &msc->win_list, entry) {
-		if (win->sgt == sgt)
-			found++;
-
-		/* skip the empty ones */
-		if (nonempty && msc_block_is_empty(msc_win_block(win, 0)))
-			continue;
-
-		if (found)
-			return win;
-	}
-
-	return NULL;
-}
-
-/**
- * msc_oldest_window() - locate the window with oldest data
- * @msc:	MSC device
- *
- * This should only be used in multiblock mode. Caller should hold the
- * msc::user_count reference.
- *
- * Return:	the oldest window with valid data
- */
-static struct msc_window *msc_oldest_window(struct msc *msc)
-{
-	struct msc_window *win;
-
-	if (list_empty(&msc->win_list))
-		return NULL;
-
-	win = msc_find_window(msc, msc_next_window(msc->cur_win)->sgt, true);
-	if (win)
-		return win;
-
-	return list_first_entry(&msc->win_list, struct msc_window, entry);
-}
-
-/**
- * msc_win_oldest_block() - locate the oldest block in a given window
- * @win:	window to look at
- *
- * Return:	index of the block with the oldest data
- */
-static unsigned int msc_win_oldest_block(struct msc_window *win)
-{
-	unsigned int blk;
-	struct msc_block_desc *bdesc = msc_win_block(win, 0);
-
-	/* without wrapping, first block is the oldest */
-	if (!msc_block_wrapped(bdesc))
-		return 0;
-
-	/*
-	 * with wrapping, last written block contains both the newest and the
-	 * oldest data for this window.
-	 */
-	for (blk = 0; blk < win->nr_segs; blk++) {
-		bdesc = msc_win_block(win, blk);
-
-		if (msc_block_last_written(bdesc))
-			return blk;
-	}
-
-	return 0;
+	return list_entry(win->entry.next, struct msc_window, entry);
 }
 
 static struct msc_block_desc *msc_iter_bdesc(struct msc_iter *iter)
 {
-	return msc_win_block(iter->win, iter->block);
+	return iter->win->block[iter->block].bdesc;
 }
 
 static void msc_iter_init(struct msc_iter *iter)
@@ -400,7 +356,7 @@ static int msc_iter_block_advance(struct msc_iter *iter)
 		return msc_iter_win_advance(iter);
 
 	/* block advance */
-	if (++iter->block == iter->win->nr_segs)
+	if (++iter->block == iter->win->nr_blocks)
 		iter->block = 0;
 
 	/* no wrapping, sanity check in case there is no last written block */
@@ -512,46 +468,12 @@ static void msc_buffer_clear_hw_header(struct msc *msc)
 		size_t hw_sz = sizeof(struct msc_block_desc) -
 			offsetof(struct msc_block_desc, hw_tag);
 
-		for (blk = 0; blk < win->nr_segs; blk++) {
-			struct msc_block_desc *bdesc = msc_win_block(win, blk);
+		for (blk = 0; blk < win->nr_blocks; blk++) {
+			struct msc_block_desc *bdesc = win->block[blk].bdesc;
 
 			memset(&bdesc->hw_tag, 0, hw_sz);
 		}
 	}
-}
-
-static int intel_th_msu_init(struct msc *msc)
-{
-	u32 mintctl, msusts;
-
-	if (!msc->do_irq)
-		return 0;
-
-	mintctl = ioread32(msc->msu_base + REG_MSU_MINTCTL);
-	mintctl |= msc->index ? M1BLIE : M0BLIE;
-	iowrite32(mintctl, msc->msu_base + REG_MSU_MINTCTL);
-	if (mintctl != ioread32(msc->msu_base + REG_MSU_MINTCTL)) {
-		dev_info(msc_dev(msc), "MINTCTL ignores writes: no usable interrupts\n");
-		msc->do_irq = 0;
-		return 0;
-	}
-
-	msusts = ioread32(msc->msu_base + REG_MSU_MSUSTS);
-	iowrite32(msusts, msc->msu_base + REG_MSU_MSUSTS);
-
-	return 0;
-}
-
-static void intel_th_msu_deinit(struct msc *msc)
-{
-	u32 mintctl;
-
-	if (!msc->do_irq)
-		return;
-
-	mintctl = ioread32(msc->msu_base + REG_MSU_MINTCTL);
-	mintctl &= msc->index ? ~M1BLIE : ~M0BLIE;
-	iowrite32(mintctl, msc->msu_base + REG_MSU_MINTCTL);
 }
 
 /**
@@ -611,14 +533,23 @@ static int msc_configure(struct msc *msc)
  */
 static void msc_disable(struct msc *msc)
 {
+	unsigned long count;
 	u32 reg;
 
 	lockdep_assert_held(&msc->buf_mutex);
 
 	intel_th_trace_disable(msc->thdev);
 
-	if (msc->mode == MSC_MODE_SINGLE) {
+	for (reg = 0, count = MSC_PLE_WAITLOOP_DEPTH;
+	     count && !(reg & MSCSTS_PLE); count--) {
 		reg = ioread32(msc->reg_base + REG_MSU_MSC0STS);
+		cpu_relax();
+	}
+
+	if (!count)
+		dev_dbg(msc_dev(msc), "timeout waiting for MSC0 PLE\n");
+
+	if (msc->mode == MSC_MODE_SINGLE) {
 		msc->single_wrap = !!(reg & MSCSTS_WRAPSTAT);
 
 		reg = ioread32(msc->reg_base + REG_MSU_MSC0MWP);
@@ -701,7 +632,7 @@ static int msc_buffer_contig_alloc(struct msc *msc, unsigned long size)
 		goto err_out;
 
 	ret = -ENOMEM;
-	page = alloc_pages(GFP_KERNEL | __GFP_ZERO | GFP_DMA32, order);
+	page = alloc_pages(GFP_KERNEL | __GFP_ZERO, order);
 	if (!page)
 		goto err_free_sgt;
 
@@ -767,64 +698,6 @@ static struct page *msc_buffer_contig_get_page(struct msc *msc,
 	return virt_to_page(msc->base + (pgoff << PAGE_SHIFT));
 }
 
-static int __msc_buffer_win_alloc(struct msc_window *win,
-				  unsigned int nr_segs)
-{
-	struct scatterlist *sg_ptr;
-	void *block;
-	int i, ret;
-
-	ret = sg_alloc_table(win->sgt, nr_segs, GFP_KERNEL);
-	if (ret)
-		return -ENOMEM;
-
-	for_each_sg(win->sgt->sgl, sg_ptr, nr_segs, i) {
-		block = dma_alloc_coherent(msc_dev(win->msc)->parent->parent,
-					  PAGE_SIZE, &sg_dma_address(sg_ptr),
-					  GFP_KERNEL);
-		if (!block)
-			goto err_nomem;
-
-		sg_set_buf(sg_ptr, block, PAGE_SIZE);
-	}
-
-	return nr_segs;
-
-err_nomem:
-	for (i--; i >= 0; i--)
-		dma_free_coherent(msc_dev(win->msc)->parent->parent, PAGE_SIZE,
-				  msc_win_block(win, i),
-				  msc_win_baddr(win, i));
-
-	sg_free_table(win->sgt);
-
-	return -ENOMEM;
-}
-
-#ifdef CONFIG_X86
-static void msc_buffer_set_uc(struct msc_window *win, unsigned int nr_segs)
-{
-	int i;
-
-	for (i = 0; i < nr_segs; i++)
-		/* Set the page as uncached */
-		set_memory_uc((unsigned long)msc_win_block(win, i), 1);
-}
-
-static void msc_buffer_set_wb(struct msc_window *win)
-{
-	int i;
-
-	for (i = 0; i < win->nr_segs; i++)
-		/* Reset the page to write-back */
-		set_memory_wb((unsigned long)msc_win_block(win, i), 1);
-}
-#else /* !X86 */
-static inline void
-msc_buffer_set_uc(struct msc_window *win, unsigned int nr_segs) {}
-static inline void msc_buffer_set_wb(struct msc_window *win) {}
-#endif /* CONFIG_X86 */
-
 /**
  * msc_buffer_win_alloc() - alloc a window for a multiblock mode
  * @msc:	MSC device
@@ -838,46 +711,44 @@ static inline void msc_buffer_set_wb(struct msc_window *win) {}
 static int msc_buffer_win_alloc(struct msc *msc, unsigned int nr_blocks)
 {
 	struct msc_window *win;
-	int ret = -ENOMEM;
+	unsigned long size = PAGE_SIZE;
+	int i, ret = -ENOMEM;
 
 	if (!nr_blocks)
 		return 0;
 
-	/*
-	 * This limitation hold as long as we need random access to the
-	 * block. When that changes, this can go away.
-	 */
-	if (nr_blocks > SG_MAX_SINGLE_ALLOC)
-		return -EINVAL;
-
-	win = kzalloc(sizeof(*win), GFP_KERNEL);
+	win = kzalloc(offsetof(struct msc_window, block[nr_blocks]),
+		      GFP_KERNEL);
 	if (!win)
 		return -ENOMEM;
 
-	win->msc = msc;
-	win->sgt = &win->_sgt;
-
 	if (!list_empty(&msc->win_list)) {
-		struct msc_window *prev = list_last_entry(&msc->win_list,
-							  struct msc_window,
-							  entry);
+		struct msc_window *prev = list_entry(msc->win_list.prev,
+						     struct msc_window, entry);
 
 		win->pgoff = prev->pgoff + prev->nr_blocks;
 	}
 
-	ret = __msc_buffer_win_alloc(win, nr_blocks);
-	if (ret < 0)
-		goto err_nomem;
+	for (i = 0; i < nr_blocks; i++) {
+		win->block[i].bdesc =
+			dma_alloc_coherent(msc_dev(msc)->parent->parent, size,
+					   &win->block[i].addr, GFP_KERNEL);
 
-	msc_buffer_set_uc(win, ret);
+		if (!win->block[i].bdesc)
+			goto err_nomem;
 
-	win->nr_segs = ret;
+#ifdef CONFIG_X86
+		/* Set the page as uncached */
+		set_memory_uc((unsigned long)win->block[i].bdesc, 1);
+#endif
+	}
+
+	win->msc = msc;
 	win->nr_blocks = nr_blocks;
 
 	if (list_empty(&msc->win_list)) {
-		msc->base = msc_win_block(win, 0);
-		msc->base_addr = msc_win_baddr(win, 0);
-		msc->cur_win = win;
+		msc->base = win->block[0].bdesc;
+		msc->base_addr = win->block[0].addr;
 	}
 
 	list_add_tail(&win->entry, &msc->win_list);
@@ -886,23 +757,17 @@ static int msc_buffer_win_alloc(struct msc *msc, unsigned int nr_blocks)
 	return 0;
 
 err_nomem:
+	for (i--; i >= 0; i--) {
+#ifdef CONFIG_X86
+		/* Reset the page to write-back before releasing */
+		set_memory_wb((unsigned long)win->block[i].bdesc, 1);
+#endif
+		dma_free_coherent(msc_dev(msc)->parent->parent, size,
+				  win->block[i].bdesc, win->block[i].addr);
+	}
 	kfree(win);
 
 	return ret;
-}
-
-static void __msc_buffer_win_free(struct msc *msc, struct msc_window *win)
-{
-	int i;
-
-	for (i = 0; i < win->nr_segs; i++) {
-		struct page *page = sg_page(&win->sgt->sgl[i]);
-
-		page->mapping = NULL;
-		dma_free_coherent(msc_dev(win->msc)->parent->parent, PAGE_SIZE,
-				  msc_win_block(win, i), msc_win_baddr(win, i));
-	}
-	sg_free_table(win->sgt);
 }
 
 /**
@@ -915,6 +780,8 @@ static void __msc_buffer_win_free(struct msc *msc, struct msc_window *win)
  */
 static void msc_buffer_win_free(struct msc *msc, struct msc_window *win)
 {
+	int i;
+
 	msc->nr_pages -= win->nr_blocks;
 
 	list_del(&win->entry);
@@ -923,9 +790,17 @@ static void msc_buffer_win_free(struct msc *msc, struct msc_window *win)
 		msc->base_addr = 0;
 	}
 
-	msc_buffer_set_wb(win);
+	for (i = 0; i < win->nr_blocks; i++) {
+		struct page *page = virt_to_page(win->block[i].bdesc);
 
-	__msc_buffer_win_free(msc, win);
+		page->mapping = NULL;
+#ifdef CONFIG_X86
+		/* Reset the page to write-back before releasing */
+		set_memory_wb((unsigned long)win->block[i].bdesc, 1);
+#endif
+		dma_free_coherent(msc_dev(win->msc)->parent->parent, PAGE_SIZE,
+				  win->block[i].bdesc, win->block[i].addr);
+	}
 
 	kfree(win);
 }
@@ -952,32 +827,35 @@ static void msc_buffer_relink(struct msc *msc)
 		 */
 		if (msc_is_last_win(win)) {
 			sw_tag |= MSC_SW_TAG_LASTWIN;
-			next_win = list_first_entry(&msc->win_list,
-						    struct msc_window, entry);
+			next_win = list_entry(msc->win_list.next,
+					      struct msc_window, entry);
 		} else {
-			next_win = list_next_entry(win, entry);
+			next_win = list_entry(win->entry.next,
+					      struct msc_window, entry);
 		}
 
-		for (blk = 0; blk < win->nr_segs; blk++) {
-			struct msc_block_desc *bdesc = msc_win_block(win, blk);
+		for (blk = 0; blk < win->nr_blocks; blk++) {
+			struct msc_block_desc *bdesc = win->block[blk].bdesc;
 
 			memset(bdesc, 0, sizeof(*bdesc));
 
-			bdesc->next_win = msc_win_bpfn(next_win, 0);
+			bdesc->next_win = next_win->block[0].addr >> PAGE_SHIFT;
 
 			/*
 			 * Similarly to last window, last block should point
 			 * to the first one.
 			 */
-			if (blk == win->nr_segs - 1) {
+			if (blk == win->nr_blocks - 1) {
 				sw_tag |= MSC_SW_TAG_LASTBLK;
-				bdesc->next_blk = msc_win_bpfn(win, 0);
+				bdesc->next_blk =
+					win->block[0].addr >> PAGE_SHIFT;
 			} else {
-				bdesc->next_blk = msc_win_bpfn(win, blk + 1);
+				bdesc->next_blk =
+					win->block[blk + 1].addr >> PAGE_SHIFT;
 			}
 
 			bdesc->sw_tag = sw_tag;
-			bdesc->block_sz = msc_win_actual_bsz(win, blk) / 64;
+			bdesc->block_sz = PAGE_SIZE / 64;
 		}
 	}
 
@@ -1136,7 +1014,6 @@ static int msc_buffer_free_unless_used(struct msc *msc)
 static struct page *msc_buffer_get_page(struct msc *msc, unsigned long pgoff)
 {
 	struct msc_window *win;
-	unsigned int blk;
 
 	if (msc->mode == MSC_MODE_SINGLE)
 		return msc_buffer_contig_get_page(msc, pgoff);
@@ -1149,18 +1026,7 @@ static struct page *msc_buffer_get_page(struct msc *msc, unsigned long pgoff)
 
 found:
 	pgoff -= win->pgoff;
-
-	for (blk = 0; blk < win->nr_segs; blk++) {
-		struct page *page = sg_page(&win->sgt->sgl[blk]);
-		size_t pgsz = PFN_DOWN(msc_win_actual_bsz(win, blk));
-
-		if (pgoff < pgsz)
-			return page + pgoff;
-
-		pgoff -= pgsz;
-	}
-
-	return NULL;
+	return virt_to_page(win->block[pgoff].bdesc);
 }
 
 /**
@@ -1413,22 +1279,6 @@ static const struct file_operations intel_th_msc_fops = {
 	.owner		= THIS_MODULE,
 };
 
-static void intel_th_msc_wait_empty(struct intel_th_device *thdev)
-{
-	struct msc *msc = dev_get_drvdata(&thdev->dev);
-	unsigned long count;
-	u32 reg;
-
-	for (reg = 0, count = MSC_PLE_WAITLOOP_DEPTH;
-	     count && !(reg & MSCSTS_PLE); count--) {
-		reg = __raw_readl(msc->reg_base + REG_MSU_MSC0STS);
-		cpu_relax();
-	}
-
-	if (!count)
-		dev_dbg(msc_dev(msc), "timeout waiting for MSC0 PLE\n");
-}
-
 static int intel_th_msc_init(struct msc *msc)
 {
 	atomic_set(&msc->user_count, -1);
@@ -1443,38 +1293,6 @@ static int intel_th_msc_init(struct msc *msc)
 		__ffs(MSC_LEN);
 
 	return 0;
-}
-
-static void msc_win_switch(struct msc *msc)
-{
-	struct msc_window *first;
-
-	first = list_first_entry(&msc->win_list, struct msc_window, entry);
-
-	if (msc_is_last_win(msc->cur_win))
-		msc->cur_win = first;
-	else
-		msc->cur_win = list_next_entry(msc->cur_win, entry);
-
-	msc->base = msc_win_block(msc->cur_win, 0);
-	msc->base_addr = msc_win_baddr(msc->cur_win, 0);
-
-	intel_th_trace_switch(msc->thdev);
-}
-
-static irqreturn_t intel_th_msc_interrupt(struct intel_th_device *thdev)
-{
-	struct msc *msc = dev_get_drvdata(&thdev->dev);
-	u32 msusts = ioread32(msc->msu_base + REG_MSU_MSUSTS);
-	u32 mask = msc->index ? MSUSTS_MSC1BLAST : MSUSTS_MSC0BLAST;
-
-	if (!(msusts & mask)) {
-		if (msc->enabled)
-			return IRQ_HANDLED;
-		return IRQ_NONE;
-	}
-
-	return IRQ_HANDLED;
 }
 
 static const char * const msc_mode[] = {
@@ -1651,38 +1469,10 @@ free_win:
 
 static DEVICE_ATTR_RW(nr_pages);
 
-static ssize_t
-win_switch_store(struct device *dev, struct device_attribute *attr,
-		 const char *buf, size_t size)
-{
-	struct msc *msc = dev_get_drvdata(dev);
-	unsigned long val;
-	int ret;
-
-	ret = kstrtoul(buf, 10, &val);
-	if (ret)
-		return ret;
-
-	if (val != 1)
-		return -EINVAL;
-
-	mutex_lock(&msc->buf_mutex);
-	if (msc->mode != MSC_MODE_MULTI)
-		ret = -ENOTSUPP;
-	else
-		msc_win_switch(msc);
-	mutex_unlock(&msc->buf_mutex);
-
-	return ret ? ret : size;
-}
-
-static DEVICE_ATTR_WO(win_switch);
-
 static struct attribute *msc_output_attrs[] = {
 	&dev_attr_wrap.attr,
 	&dev_attr_mode.attr,
 	&dev_attr_nr_pages.attr,
-	&dev_attr_win_switch.attr,
 	NULL,
 };
 
@@ -1710,19 +1500,10 @@ static int intel_th_msc_probe(struct intel_th_device *thdev)
 	if (!msc)
 		return -ENOMEM;
 
-	res = intel_th_device_get_resource(thdev, IORESOURCE_IRQ, 1);
-	if (!res)
-		msc->do_irq = 1;
-
 	msc->index = thdev->id;
 
 	msc->thdev = thdev;
 	msc->reg_base = base + msc->index * 0x100;
-	msc->msu_base = base;
-
-	err = intel_th_msu_init(msc);
-	if (err)
-		return err;
 
 	err = intel_th_msc_init(msc);
 	if (err)
@@ -1739,7 +1520,6 @@ static void intel_th_msc_remove(struct intel_th_device *thdev)
 	int ret;
 
 	intel_th_msc_deactivate(thdev);
-	intel_th_msu_deinit(msc);
 
 	/*
 	 * Buffers should not be used at this point except if the
@@ -1753,8 +1533,6 @@ static void intel_th_msc_remove(struct intel_th_device *thdev)
 static struct intel_th_driver intel_th_msc_driver = {
 	.probe	= intel_th_msc_probe,
 	.remove	= intel_th_msc_remove,
-	.irq		= intel_th_msc_interrupt,
-	.wait_empty	= intel_th_msc_wait_empty,
 	.activate	= intel_th_msc_activate,
 	.deactivate	= intel_th_msc_deactivate,
 	.fops	= &intel_th_msc_fops,

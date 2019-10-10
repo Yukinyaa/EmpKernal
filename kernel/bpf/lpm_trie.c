@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Longest prefix match list implementation
  *
  * Copyright (c) 2016,2017 Daniel Mack
  * Copyright (c) 2016 David Herrmann
+ *
+ * This file is subject to the terms and conditions of version 2 of the GNU
+ * General Public License.  See the file COPYING in the main directory of the
+ * Linux distribution for more details.
  */
 
 #include <linux/bpf.h>
@@ -535,7 +538,7 @@ out:
 #define LPM_KEY_SIZE_MIN	LPM_KEY_SIZE(LPM_DATA_SIZE_MIN)
 
 #define LPM_CREATE_FLAG_MASK	(BPF_F_NO_PREALLOC | BPF_F_NUMA_NODE |	\
-				 BPF_F_ACCESS_MASK)
+				 BPF_F_RDONLY | BPF_F_WRONLY)
 
 static struct bpf_map *trie_alloc(union bpf_attr *attr)
 {
@@ -550,7 +553,6 @@ static struct bpf_map *trie_alloc(union bpf_attr *attr)
 	if (attr->max_entries == 0 ||
 	    !(attr->map_flags & BPF_F_NO_PREALLOC) ||
 	    attr->map_flags & ~LPM_CREATE_FLAG_MASK ||
-	    !bpf_map_flags_access_ok(attr->map_flags) ||
 	    attr->key_size < LPM_KEY_SIZE_MIN ||
 	    attr->key_size > LPM_KEY_SIZE_MAX ||
 	    attr->value_size < LPM_VAL_SIZE_MIN ||
@@ -570,8 +572,14 @@ static struct bpf_map *trie_alloc(union bpf_attr *attr)
 	cost_per_node = sizeof(struct lpm_trie_node) +
 			attr->value_size + trie->data_size;
 	cost += (u64) attr->max_entries * cost_per_node;
+	if (cost >= U32_MAX - PAGE_SIZE) {
+		ret = -E2BIG;
+		goto out_err;
+	}
 
-	ret = bpf_map_charge_init(&trie->map.memory, cost);
+	trie->map.pages = round_up(cost, PAGE_SIZE) >> PAGE_SHIFT;
+
+	ret = bpf_map_precharge_memlock(trie->map.pages);
 	if (ret)
 		goto out_err;
 
@@ -707,14 +715,9 @@ find_leftmost:
 	 * have exact two children, so this function will never return NULL.
 	 */
 	for (node = search_root; node;) {
-		if (node->flags & LPM_TREE_NODE_FLAG_IM) {
-			node = rcu_dereference(node->child[0]);
-		} else {
+		if (!(node->flags & LPM_TREE_NODE_FLAG_IM))
 			next_node = node;
-			node = rcu_dereference(node->child[0]);
-			if (!node)
-				node = rcu_dereference(next_node->child[1]);
-		}
+		node = rcu_dereference(node->child[0]);
 	}
 do_copy:
 	next_key->prefixlen = next_node->prefixlen;

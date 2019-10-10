@@ -19,6 +19,8 @@
 
 #define VCPU_ID		5
 
+static bool have_nested_state;
+
 void l2_guest_code(void)
 {
 	GUEST_SYNC(6);
@@ -71,6 +73,7 @@ void guest_code(struct vmx_pages *vmx_pages)
 
 int main(int argc, char *argv[])
 {
+	struct vmx_pages *vmx_pages = NULL;
 	vm_vaddr_t vmx_pages_gva = 0;
 
 	struct kvm_regs regs1, regs2;
@@ -79,6 +82,13 @@ int main(int argc, char *argv[])
 	struct kvm_x86_state *state;
 	struct ucall uc;
 	int stage;
+	uint16_t evmcs_ver;
+	struct kvm_enable_cap enable_evmcs_cap = {
+		.cap = KVM_CAP_HYPERV_ENLIGHTENED_VMCS,
+		 .args[0] = (unsigned long)&evmcs_ver
+	};
+
+	struct kvm_cpuid_entry2 *entry = kvm_get_supported_cpuid_entry(1);
 
 	/* Create VM */
 	vm = vm_create_default(VCPU_ID, 0, guest_code);
@@ -91,13 +101,19 @@ int main(int argc, char *argv[])
 		exit(KSFT_SKIP);
 	}
 
-	vcpu_enable_evmcs(vm, VCPU_ID);
+	vcpu_ioctl(vm, VCPU_ID, KVM_ENABLE_CAP, &enable_evmcs_cap);
+
+	/* KVM should return supported EVMCS version range */
+	TEST_ASSERT(((evmcs_ver >> 8) >= (evmcs_ver & 0xff)) &&
+		    (evmcs_ver & 0xff) > 0,
+		    "Incorrect EVMCS version range: %x:%x\n",
+		    evmcs_ver & 0xff, evmcs_ver >> 8);
 
 	run = vcpu_state(vm, VCPU_ID);
 
 	vcpu_regs_get(vm, VCPU_ID, &regs1);
 
-	vcpu_alloc_vmx(vm, &vmx_pages_gva);
+	vmx_pages = vcpu_alloc_vmx(vm, &vmx_pages_gva);
 	vcpu_args_set(vm, VCPU_ID, 1, vmx_pages_gva);
 
 	for (stage = 1;; stage++) {
@@ -133,9 +149,8 @@ int main(int argc, char *argv[])
 
 		/* Restore state in a new VM.  */
 		kvm_vm_restart(vm, O_RDWR);
-		vm_vcpu_add(vm, VCPU_ID);
+		vm_vcpu_add(vm, VCPU_ID, 0, 0);
 		vcpu_set_cpuid(vm, VCPU_ID, kvm_get_supported_cpuid());
-		vcpu_enable_evmcs(vm, VCPU_ID);
 		vcpu_load_state(vm, VCPU_ID, state);
 		run = vcpu_state(vm, VCPU_ID);
 		free(state);

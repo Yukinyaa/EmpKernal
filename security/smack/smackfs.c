@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2007 Casey Schaufler <casey@schaufler-ca.com>
+ *
+ *	This program is free software; you can redistribute it and/or modify
+ *  	it under the terms of the GNU General Public License as published by
+ *	the Free Software Foundation, version 2.
  *
  * Authors:
  * 	Casey Schaufler <casey@schaufler-ca.com>
@@ -10,6 +13,7 @@
  *
  *	Karl MacMillan <kmacmillan@tresys.com>
  *	James Morris <jmorris@redhat.com>
+ *
  */
 
 #include <linux/kernel.h>
@@ -23,7 +27,6 @@
 #include <linux/ctype.h>
 #include <linux/audit.h>
 #include <linux/magic.h>
-#include <linux/fs_context.h>
 #include "smack.h"
 
 #define BEBITS	(sizeof(__be32) * 8)
@@ -64,6 +67,7 @@ enum smk_inos {
 /*
  * List locks
  */
+static DEFINE_MUTEX(smack_master_list_lock);
 static DEFINE_MUTEX(smack_cipso_lock);
 static DEFINE_MUTEX(smack_ambient_lock);
 static DEFINE_MUTEX(smk_net4addr_lock);
@@ -130,7 +134,15 @@ LIST_HEAD(smk_net6addr_list);
 
 /*
  * Rule lists are maintained for each label.
+ * This master list is just for reading /smack/load and /smack/load2.
  */
+struct smack_master_list {
+	struct list_head	list;
+	struct smack_rule	*smk_rule;
+};
+
+static LIST_HEAD(smack_rule_list);
+
 struct smack_parsed_rule {
 	struct smack_known	*smk_subject;
 	struct smack_known	*smk_object;
@@ -199,6 +211,7 @@ static void smk_netlabel_audit_set(struct netlbl_audit *nap)
  * @srp: the rule to add or replace
  * @rule_list: the list of rules
  * @rule_lock: the rule list lock
+ * @global: if non-zero, indicates a global rule
  *
  * Looks through the current subject/object/access list for
  * the subject/object pair and replaces the access that was
@@ -210,9 +223,10 @@ static void smk_netlabel_audit_set(struct netlbl_audit *nap)
  */
 static int smk_set_access(struct smack_parsed_rule *srp,
 				struct list_head *rule_list,
-				struct mutex *rule_lock)
+				struct mutex *rule_lock, int global)
 {
 	struct smack_rule *sp;
+	struct smack_master_list *smlp;
 	int found = 0;
 	int rc = 0;
 
@@ -233,7 +247,7 @@ static int smk_set_access(struct smack_parsed_rule *srp,
 	}
 
 	if (found == 0) {
-		sp = kmem_cache_zalloc(smack_rule_cache, GFP_KERNEL);
+		sp = kzalloc(sizeof(*sp), GFP_KERNEL);
 		if (sp == NULL) {
 			rc = -ENOMEM;
 			goto out;
@@ -244,6 +258,22 @@ static int smk_set_access(struct smack_parsed_rule *srp,
 		sp->smk_access = srp->smk_access1 & ~srp->smk_access2;
 
 		list_add_rcu(&sp->list, rule_list);
+		/*
+		 * If this is a global as opposed to self and a new rule
+		 * it needs to get added for reporting.
+		 */
+		if (global) {
+			mutex_unlock(rule_lock);
+			smlp = kzalloc(sizeof(*smlp), GFP_KERNEL);
+			if (smlp != NULL) {
+				smlp->smk_rule = sp;
+				mutex_lock(&smack_master_list_lock);
+				list_add_rcu(&smlp->list, &smack_rule_list);
+				mutex_unlock(&smack_master_list_lock);
+			} else
+				rc = -ENOMEM;
+			return rc;
+		}
 	}
 
 out:
@@ -510,9 +540,9 @@ static ssize_t smk_write_rules_list(struct file *file, const char __user *buf,
 
 		if (rule_list == NULL)
 			rc = smk_set_access(&rule, &rule.smk_subject->smk_rules,
-				&rule.smk_subject->smk_rules_lock);
+				&rule.smk_subject->smk_rules_lock, 1);
 		else
-			rc = smk_set_access(&rule, rule_list, rule_lock);
+			rc = smk_set_access(&rule, rule_list, rule_lock, 0);
 
 		if (rc)
 			goto out;
@@ -606,23 +636,21 @@ static void smk_rule_show(struct seq_file *s, struct smack_rule *srp, int max)
 
 static void *load2_seq_start(struct seq_file *s, loff_t *pos)
 {
-	return smk_seq_start(s, pos, &smack_known_list);
+	return smk_seq_start(s, pos, &smack_rule_list);
 }
 
 static void *load2_seq_next(struct seq_file *s, void *v, loff_t *pos)
 {
-	return smk_seq_next(s, v, pos, &smack_known_list);
+	return smk_seq_next(s, v, pos, &smack_rule_list);
 }
 
 static int load_seq_show(struct seq_file *s, void *v)
 {
 	struct list_head *list = v;
-	struct smack_rule *srp;
-	struct smack_known *skp =
-		list_entry_rcu(list, struct smack_known, list);
+	struct smack_master_list *smlp =
+		list_entry_rcu(list, struct smack_master_list, list);
 
-	list_for_each_entry_rcu(srp, &skp->smk_rules, list)
-		smk_rule_show(s, srp, SMK_LABELLEN);
+	smk_rule_show(s, smlp->smk_rule, SMK_LABELLEN);
 
 	return 0;
 }
@@ -2324,12 +2352,10 @@ static const struct file_operations smk_access_ops = {
 static int load2_seq_show(struct seq_file *s, void *v)
 {
 	struct list_head *list = v;
-	struct smack_rule *srp;
-	struct smack_known *skp =
-		list_entry_rcu(list, struct smack_known, list);
+	struct smack_master_list *smlp =
+		list_entry_rcu(list, struct smack_master_list, list);
 
-	list_for_each_entry_rcu(srp, &skp->smk_rules, list)
-		smk_rule_show(s, srp, SMK_LONGLABEL);
+	smk_rule_show(s, smlp->smk_rule, SMK_LONGLABEL);
 
 	return 0;
 }
@@ -2817,13 +2843,14 @@ static const struct file_operations smk_ptrace_ops = {
 /**
  * smk_fill_super - fill the smackfs superblock
  * @sb: the empty superblock
- * @fc: unused
+ * @data: unused
+ * @silent: unused
  *
  * Fill in the well known entries for the smack filesystem
  *
  * Returns 0 on success, an error code on failure
  */
-static int smk_fill_super(struct super_block *sb, struct fs_context *fc)
+static int smk_fill_super(struct super_block *sb, void *data, int silent)
 {
 	int rc;
 
@@ -2893,35 +2920,25 @@ static int smk_fill_super(struct super_block *sb, struct fs_context *fc)
 }
 
 /**
- * smk_get_tree - get the smackfs superblock
- * @fc: The mount context, including any options
+ * smk_mount - get the smackfs superblock
+ * @fs_type: passed along without comment
+ * @flags: passed along without comment
+ * @dev_name: passed along without comment
+ * @data: passed along without comment
  *
  * Just passes everything along.
  *
  * Returns what the lower level code does.
  */
-static int smk_get_tree(struct fs_context *fc)
+static struct dentry *smk_mount(struct file_system_type *fs_type,
+		      int flags, const char *dev_name, void *data)
 {
-	return get_tree_single(fc, smk_fill_super);
-}
-
-static const struct fs_context_operations smk_context_ops = {
-	.get_tree	= smk_get_tree,
-};
-
-/**
- * smk_init_fs_context - Initialise a filesystem context for smackfs
- * @fc: The blank mount context
- */
-static int smk_init_fs_context(struct fs_context *fc)
-{
-	fc->ops = &smk_context_ops;
-	return 0;
+	return mount_single(fs_type, flags, data, smk_fill_super);
 }
 
 static struct file_system_type smk_fs_type = {
 	.name		= "smackfs",
-	.init_fs_context = smk_init_fs_context,
+	.mount		= smk_mount,
 	.kill_sb	= kill_litter_super,
 };
 

@@ -50,7 +50,8 @@
 
 #include <rdma/rdma_vt.h>
 
-int rvt_alloc_pd(struct ib_pd *pd, struct ib_udata *udata);
-void rvt_dealloc_pd(struct ib_pd *ibpd, struct ib_udata *udata);
+int rvt_alloc_pd(struct ib_pd *pd, struct ib_ucontext *context,
+		 struct ib_udata *udata);
+void rvt_dealloc_pd(struct ib_pd *ibpd);
 
 #endif          /* DEF_RDMAVTPD_H */

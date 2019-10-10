@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *	fs/bfs/inode.c
  *	BFS superblock and inode operations.
@@ -246,9 +245,15 @@ static struct inode *bfs_alloc_inode(struct super_block *sb)
 	return &bi->vfs_inode;
 }
 
-static void bfs_free_inode(struct inode *inode)
+static void bfs_i_callback(struct rcu_head *head)
 {
+	struct inode *inode = container_of(head, struct inode, i_rcu);
 	kmem_cache_free(bfs_inode_cachep, BFS_I(inode));
+}
+
+static void bfs_destroy_inode(struct inode *inode)
+{
+	call_rcu(&inode->i_rcu, bfs_i_callback);
 }
 
 static void init_once(void *foo)
@@ -282,7 +287,7 @@ static void destroy_inodecache(void)
 
 static const struct super_operations bfs_sops = {
 	.alloc_inode	= bfs_alloc_inode,
-	.free_inode	= bfs_free_inode,
+	.destroy_inode	= bfs_destroy_inode,
 	.write_inode	= bfs_write_inode,
 	.evict_inode	= bfs_evict_inode,
 	.put_super	= bfs_put_super,

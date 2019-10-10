@@ -188,6 +188,8 @@ source "drivers/ipack/Kconfig"
 
 source "drivers/reset/Kconfig"
 
+source "drivers/fmc/Kconfig"
+
 source "drivers/phy/Kconfig"
 
 source "drivers/powercap/Kconfig"
@@ -227,7 +229,5 @@ source "drivers/siox/Kconfig"
 source "drivers/slimbus/Kconfig"
 
 source "drivers/interconnect/Kconfig"
-
-source "drivers/counter/Kconfig"
 
 endmenu

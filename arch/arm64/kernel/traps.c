@@ -1,9 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Based on arch/arm/kernel/traps.c
  *
  * Copyright (C) 1995-2009 Russell King
  * Copyright (C) 2012 ARM Ltd.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/bug.h>
@@ -55,19 +66,16 @@ static void dump_backtrace_entry(unsigned long where)
 	printk(" %pS\n", (void *)where);
 }
 
-static void dump_kernel_instr(const char *lvl, struct pt_regs *regs)
+static void __dump_instr(const char *lvl, struct pt_regs *regs)
 {
 	unsigned long addr = instruction_pointer(regs);
 	char str[sizeof("00000000 ") * 5 + 2 + 1], *p = str;
 	int i;
 
-	if (user_mode(regs))
-		return;
-
 	for (i = -4; i < 1; i++) {
 		unsigned int val, bad;
 
-		bad = aarch64_insn_read(&((u32 *)addr)[i], &val);
+		bad = get_user(val, &((u32 *)addr)[i]);
 
 		if (!bad)
 			p += sprintf(p, i == 0 ? "(%08x) " : "%08x ", val);
@@ -76,8 +84,19 @@ static void dump_kernel_instr(const char *lvl, struct pt_regs *regs)
 			break;
 		}
 	}
-
 	printk("%sCode: %s\n", lvl, str);
+}
+
+static void dump_instr(const char *lvl, struct pt_regs *regs)
+{
+	if (!user_mode(regs)) {
+		mm_segment_t fs = get_fs();
+		set_fs(KERNEL_DS);
+		__dump_instr(lvl, regs);
+		set_fs(fs);
+	} else {
+		__dump_instr(lvl, regs);
+	}
 }
 
 void dump_backtrace(struct pt_regs *regs, struct task_struct *tsk)
@@ -100,17 +119,18 @@ void dump_backtrace(struct pt_regs *regs, struct task_struct *tsk)
 		return;
 
 	if (tsk == current) {
-		start_backtrace(&frame,
-				(unsigned long)__builtin_frame_address(0),
-				(unsigned long)dump_backtrace);
+		frame.fp = (unsigned long)__builtin_frame_address(0);
+		frame.pc = (unsigned long)dump_backtrace;
 	} else {
 		/*
 		 * task blocked in __switch_to
 		 */
-		start_backtrace(&frame,
-				thread_saved_fp(tsk),
-				thread_saved_pc(tsk));
+		frame.fp = thread_saved_fp(tsk);
+		frame.pc = thread_saved_pc(tsk);
 	}
+#ifdef CONFIG_FUNCTION_GRAPH_TRACER
+	frame.graph = 0;
+#endif
 
 	printk("Call trace:\n");
 	do {
@@ -148,6 +168,7 @@ void show_stack(struct task_struct *tsk, unsigned long *sp)
 
 static int __die(const char *str, int err, struct pt_regs *regs)
 {
+	struct task_struct *tsk = current;
 	static int die_counter;
 	int ret;
 
@@ -160,9 +181,13 @@ static int __die(const char *str, int err, struct pt_regs *regs)
 		return ret;
 
 	print_modules();
+	pr_emerg("Process %.*s (pid: %d, stack limit = 0x%p)\n",
+		 TASK_COMM_LEN, tsk->comm, task_pid_nr(tsk),
+		 end_of_stack(tsk));
 	show_regs(regs);
 
-	dump_kernel_instr(KERN_EMERG, regs);
+	if (!user_mode(regs))
+		dump_instr(KERN_EMERG, regs);
 
 	return ret;
 }
@@ -231,17 +256,14 @@ void arm64_force_sig_fault(int signo, int code, void __user *addr,
 			   const char *str)
 {
 	arm64_show_signal(signo, str);
-	if (signo == SIGKILL)
-		force_sig(SIGKILL);
-	else
-		force_sig_fault(signo, code, addr);
+	force_sig_fault(signo, code, addr, current);
 }
 
 void arm64_force_sig_mceerr(int code, void __user *addr, short lsb,
 			    const char *str)
 {
 	arm64_show_signal(SIGBUS, str);
-	force_sig_mceerr(code, addr, lsb);
+	force_sig_mceerr(code, addr, lsb, current);
 }
 
 void arm64_force_sig_ptrace_errno_trap(int errno, void __user *addr,
@@ -440,9 +462,6 @@ static void user_cache_maint_handler(unsigned int esr, struct pt_regs *regs)
 	case ESR_ELx_SYS64_ISS_CRM_DC_CVAC:	/* DC CVAC, gets promoted */
 		__user_cache_maint("dc civac", address, ret);
 		break;
-	case ESR_ELx_SYS64_ISS_CRM_DC_CVADP:	/* DC CVADP */
-		__user_cache_maint("sys 3, c7, c13, 1", address, ret);
-		break;
 	case ESR_ELx_SYS64_ISS_CRM_DC_CVAP:	/* DC CVAP */
 		__user_cache_maint("sys 3, c7, c12, 1", address, ret);
 		break;
@@ -477,7 +496,7 @@ static void cntvct_read_handler(unsigned int esr, struct pt_regs *regs)
 {
 	int rt = ESR_ELx_SYS64_ISS_RT(esr);
 
-	pt_regs_write_reg(regs, rt, arch_timer_read_counter());
+	pt_regs_write_reg(regs, rt, arch_counter_get_cntvct());
 	arm64_skip_faulting_instruction(regs, AARCH64_INSN_SIZE);
 }
 
@@ -649,7 +668,7 @@ static void compat_cntvct_read_handler(unsigned int esr, struct pt_regs *regs)
 {
 	int rt = (esr & ESR_ELx_CP15_64_ISS_RT_MASK) >> ESR_ELx_CP15_64_ISS_RT_SHIFT;
 	int rt2 = (esr & ESR_ELx_CP15_64_ISS_RT2_MASK) >> ESR_ELx_CP15_64_ISS_RT2_SHIFT;
-	u64 val = arch_timer_read_counter();
+	u64 val = arch_counter_get_cntvct();
 
 	pt_regs_write_reg(regs, rt, lower_32_bits(val));
 	pt_regs_write_reg(regs, rt2, upper_32_bits(val));
@@ -733,7 +752,6 @@ static const char *esr_class_str[] = {
 	[ESR_ELx_EC_CP14_LS]		= "CP14 LDC/STC",
 	[ESR_ELx_EC_FP_ASIMD]		= "ASIMD",
 	[ESR_ELx_EC_CP10_ID]		= "CP10 MRC/VMRS",
-	[ESR_ELx_EC_PAC]		= "PAC",
 	[ESR_ELx_EC_CP14_64]		= "CP14 MCRR/MRRC",
 	[ESR_ELx_EC_ILL]		= "PSTATE.IL",
 	[ESR_ELx_EC_SVC32]		= "SVC (AArch32)",
@@ -871,10 +889,6 @@ bool arm64_is_fatal_ras_serror(struct pt_regs *regs, unsigned int esr)
 		/*
 		 * The CPU can't make progress. The exception may have
 		 * been imprecise.
-		 *
-		 * Neoverse-N1 #1349291 means a non-KVM SError reported as
-		 * Unrecoverable should be treated as Uncontainable. We
-		 * call arm64_serror_panic() in both cases.
 		 */
 		return true;
 
@@ -936,6 +950,9 @@ int is_valid_bugaddr(unsigned long addr)
 
 static int bug_handler(struct pt_regs *regs, unsigned int esr)
 {
+	if (user_mode(regs))
+		return DBG_HOOK_ERROR;
+
 	switch (report_bug(regs->pc, regs)) {
 	case BUG_TRAP_TYPE_BUG:
 		die("Oops - BUG", regs, 0);
@@ -955,8 +972,9 @@ static int bug_handler(struct pt_regs *regs, unsigned int esr)
 }
 
 static struct break_hook bug_break_hook = {
+	.esr_val = 0xf2000000 | BUG_BRK_IMM,
+	.esr_mask = 0xffffffff,
 	.fn = bug_handler,
-	.imm = BUG_BRK_IMM,
 };
 
 #ifdef CONFIG_KASAN_SW_TAGS
@@ -973,6 +991,9 @@ static int kasan_handler(struct pt_regs *regs, unsigned int esr)
 	size_t size = KASAN_ESR_SIZE(esr);
 	u64 addr = regs->regs[0];
 	u64 pc = regs->pc;
+
+	if (user_mode(regs))
+		return DBG_HOOK_ERROR;
 
 	kasan_report(addr, size, write, pc);
 
@@ -998,10 +1019,13 @@ static int kasan_handler(struct pt_regs *regs, unsigned int esr)
 	return DBG_HOOK_HANDLED;
 }
 
+#define KASAN_ESR_VAL (0xf2000000 | KASAN_BRK_IMM)
+#define KASAN_ESR_MASK 0xffffff00
+
 static struct break_hook kasan_break_hook = {
-	.fn	= kasan_handler,
-	.imm	= KASAN_BRK_IMM,
-	.mask	= KASAN_BRK_MASK,
+	.esr_val = KASAN_ESR_VAL,
+	.esr_mask = KASAN_ESR_MASK,
+	.fn = kasan_handler,
 };
 #endif
 
@@ -1013,9 +1037,7 @@ int __init early_brk64(unsigned long addr, unsigned int esr,
 		struct pt_regs *regs)
 {
 #ifdef CONFIG_KASAN_SW_TAGS
-	unsigned int comment = esr & ESR_ELx_BRK64_ISS_COMMENT_MASK;
-
-	if ((comment & ~KASAN_BRK_MASK) == KASAN_BRK_IMM)
+	if ((esr & KASAN_ESR_MASK) == KASAN_ESR_VAL)
 		return kasan_handler(regs, esr) != DBG_HOOK_HANDLED;
 #endif
 	return bug_handler(regs, esr) != DBG_HOOK_HANDLED;
@@ -1024,8 +1046,8 @@ int __init early_brk64(unsigned long addr, unsigned int esr,
 /* This registration must happen early, before debug_traps_init(). */
 void __init trap_init(void)
 {
-	register_kernel_break_hook(&bug_break_hook);
+	register_break_hook(&bug_break_hook);
 #ifdef CONFIG_KASAN_SW_TAGS
-	register_kernel_break_hook(&kasan_break_hook);
+	register_break_hook(&kasan_break_hook);
 #endif
 }

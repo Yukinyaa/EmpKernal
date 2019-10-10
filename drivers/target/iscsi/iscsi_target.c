@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*******************************************************************************
  * This file contains main functions related to the iSCSI Target Core Driver.
  *
@@ -6,6 +5,15 @@
  *
  * Author: Nicholas A. Bellinger <nab@linux-iscsi.org>
  *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  ******************************************************************************/
 
 #include <crypto/hash.h>
@@ -565,8 +573,7 @@ iscsit_xmit_nondatain_pdu(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 	return 0;
 }
 
-static int iscsit_map_iovec(struct iscsi_cmd *cmd, struct kvec *iov, int nvec,
-			    u32 data_offset, u32 data_length);
+static int iscsit_map_iovec(struct iscsi_cmd *, struct kvec *, u32, u32);
 static void iscsit_unmap_iovec(struct iscsi_cmd *);
 static u32 iscsit_do_crypto_hash_sg(struct ahash_request *, struct iscsi_cmd *,
 				    u32, u32, u32, u8 *);
@@ -597,8 +604,7 @@ iscsit_xmit_datain_pdu(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 			 *header_digest);
 	}
 
-	iov_ret = iscsit_map_iovec(cmd, &cmd->iov_data[iov_count],
-				   cmd->orig_iov_data_count - (iov_count + 2),
+	iov_ret = iscsit_map_iovec(cmd, &cmd->iov_data[1],
 				   datain->offset, datain->length);
 	if (iov_ret < 0)
 		return -1;
@@ -880,10 +886,13 @@ EXPORT_SYMBOL(iscsit_reject_cmd);
  * Map some portion of the allocated scatterlist to an iovec, suitable for
  * kernel sockets to copy data in/out.
  */
-static int iscsit_map_iovec(struct iscsi_cmd *cmd, struct kvec *iov, int nvec,
-			    u32 data_offset, u32 data_length)
+static int iscsit_map_iovec(
+	struct iscsi_cmd *cmd,
+	struct kvec *iov,
+	u32 data_offset,
+	u32 data_length)
 {
-	u32 i = 0, orig_data_length = data_length;
+	u32 i = 0;
 	struct scatterlist *sg;
 	unsigned int page_off;
 
@@ -892,12 +901,9 @@ static int iscsit_map_iovec(struct iscsi_cmd *cmd, struct kvec *iov, int nvec,
 	 */
 	u32 ent = data_offset / PAGE_SIZE;
 
-	if (!data_length)
-		return 0;
-
 	if (ent >= cmd->se_cmd.t_data_nents) {
 		pr_err("Initial page entry out-of-bounds\n");
-		goto overflow;
+		return -1;
 	}
 
 	sg = &cmd->se_cmd.t_data_sg[ent];
@@ -907,12 +913,7 @@ static int iscsit_map_iovec(struct iscsi_cmd *cmd, struct kvec *iov, int nvec,
 	cmd->first_data_sg_off = page_off;
 
 	while (data_length) {
-		u32 cur_len;
-
-		if (WARN_ON_ONCE(!sg || i >= nvec))
-			goto overflow;
-
-		cur_len = min_t(u32, data_length, sg->length - page_off);
+		u32 cur_len = min_t(u32, data_length, sg->length - page_off);
 
 		iov[i].iov_base = kmap(sg_page(sg)) + sg->offset + page_off;
 		iov[i].iov_len = cur_len;
@@ -926,16 +927,6 @@ static int iscsit_map_iovec(struct iscsi_cmd *cmd, struct kvec *iov, int nvec,
 	cmd->kmapped_nents = i;
 
 	return i;
-
-overflow:
-	pr_err("offset %d + length %d overflow; %d/%d; sg-list:\n",
-	       data_offset, orig_data_length, i, nvec);
-	for_each_sg(cmd->se_cmd.t_data_sg, sg,
-		    cmd->se_cmd.t_data_nents, i) {
-		pr_err("[%d] off %d len %d\n",
-		       i, sg->offset, sg->length);
-	}
-	return -1;
 }
 
 static void iscsit_unmap_iovec(struct iscsi_cmd *cmd)
@@ -1277,27 +1268,27 @@ iscsit_get_immediate_data(struct iscsi_cmd *cmd, struct iscsi_scsi_req *hdr,
 			  bool dump_payload)
 {
 	int cmdsn_ret = 0, immed_ret = IMMEDIATE_DATA_NORMAL_OPERATION;
-	int rc;
-
 	/*
 	 * Special case for Unsupported SAM WRITE Opcodes and ImmediateData=Yes.
 	 */
-	if (dump_payload) {
-		u32 length = min(cmd->se_cmd.data_length - cmd->write_data_done,
-				 cmd->first_burst_len);
-
-		pr_debug("Dumping min(%d - %d, %d) = %d bytes of immediate data\n",
-			 cmd->se_cmd.data_length, cmd->write_data_done,
-			 cmd->first_burst_len, length);
-		rc = iscsit_dump_data_payload(cmd->conn, length, 1);
-		pr_debug("Finished dumping immediate data\n");
-		if (rc < 0)
-			immed_ret = IMMEDIATE_DATA_CANNOT_RECOVER;
-	} else {
-		immed_ret = iscsit_handle_immediate_data(cmd, hdr,
-							 cmd->first_burst_len);
+	if (dump_payload)
+		goto after_immediate_data;
+	/*
+	 * Check for underflow case where both EDTL and immediate data payload
+	 * exceeds what is presented by CDB's TRANSFER LENGTH, and what has
+	 * already been set in target_cmd_size_check() as se_cmd->data_length.
+	 *
+	 * For this special case, fail the command and dump the immediate data
+	 * payload.
+	 */
+	if (cmd->first_burst_len > cmd->se_cmd.data_length) {
+		cmd->sense_reason = TCM_INVALID_CDB_FIELD;
+		goto after_immediate_data;
 	}
 
+	immed_ret = iscsit_handle_immediate_data(cmd, hdr,
+					cmd->first_burst_len);
+after_immediate_data:
 	if (immed_ret == IMMEDIATE_DATA_NORMAL_OPERATION) {
 		/*
 		 * A PDU/CmdSN carrying Immediate Data passed
@@ -1310,9 +1301,12 @@ iscsit_get_immediate_data(struct iscsi_cmd *cmd, struct iscsi_scsi_req *hdr,
 			return -1;
 
 		if (cmd->sense_reason || cmdsn_ret == CMDSN_LOWER_THAN_EXP) {
-			target_put_sess_cmd(&cmd->se_cmd);
+			int rc;
 
-			return 0;
+			rc = iscsit_dump_data_payload(cmd->conn,
+						      cmd->first_burst_len, 1);
+			target_put_sess_cmd(&cmd->se_cmd);
+			return rc;
 		} else if (cmd->unsolicited_data)
 			iscsit_set_unsolicited_dataout(cmd);
 
@@ -1574,16 +1568,14 @@ iscsit_get_dataout(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 {
 	struct kvec *iov;
 	u32 checksum, iov_count = 0, padding = 0, rx_got = 0, rx_size = 0;
-	u32 payload_length;
+	u32 payload_length = ntoh24(hdr->dlength);
 	int iov_ret, data_crc_failed = 0;
 
-	payload_length = min_t(u32, cmd->se_cmd.data_length,
-			       ntoh24(hdr->dlength));
 	rx_size += payload_length;
 	iov = &cmd->iov_data[0];
 
-	iov_ret = iscsit_map_iovec(cmd, iov, cmd->orig_iov_data_count - 2,
-				   be32_to_cpu(hdr->offset), payload_length);
+	iov_ret = iscsit_map_iovec(cmd, iov, be32_to_cpu(hdr->offset),
+				   payload_length);
 	if (iov_ret < 0)
 		return -1;
 
@@ -1603,7 +1595,6 @@ iscsit_get_dataout(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 		rx_size += ISCSI_CRC_LEN;
 	}
 
-	WARN_ON_ONCE(iov_count > cmd->orig_iov_data_count);
 	rx_got = rx_data(conn, &cmd->iov_data[0], iov_count, rx_size);
 
 	iscsit_unmap_iovec(cmd);
@@ -1869,7 +1860,6 @@ static int iscsit_handle_nop_out(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 			rx_size += ISCSI_CRC_LEN;
 		}
 
-		WARN_ON_ONCE(niov > ARRAY_SIZE(cmd->iov_misc));
 		rx_got = rx_data(conn, &cmd->iov_misc[0], niov, rx_size);
 		if (rx_got != rx_size) {
 			ret = -1;
@@ -2275,7 +2265,6 @@ iscsit_handle_text_cmd(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 			rx_size += ISCSI_CRC_LEN;
 		}
 
-		WARN_ON_ONCE(niov > ARRAY_SIZE(iov));
 		rx_got = rx_data(conn, &iov[0], niov, rx_size);
 		if (rx_got != rx_size)
 			goto reject;
@@ -2586,34 +2575,14 @@ static int iscsit_handle_immediate_data(
 	u32 checksum, iov_count = 0, padding = 0;
 	struct iscsi_conn *conn = cmd->conn;
 	struct kvec *iov;
-	void *overflow_buf = NULL;
 
-	BUG_ON(cmd->write_data_done > cmd->se_cmd.data_length);
-	rx_size = min(cmd->se_cmd.data_length - cmd->write_data_done, length);
-	iov_ret = iscsit_map_iovec(cmd, cmd->iov_data,
-				   cmd->orig_iov_data_count - 2,
-				   cmd->write_data_done, rx_size);
+	iov_ret = iscsit_map_iovec(cmd, cmd->iov_data, cmd->write_data_done, length);
 	if (iov_ret < 0)
 		return IMMEDIATE_DATA_CANNOT_RECOVER;
 
+	rx_size = length;
 	iov_count = iov_ret;
 	iov = &cmd->iov_data[0];
-	if (rx_size < length) {
-		/*
-		 * Special case: length of immediate data exceeds the data
-		 * buffer size derived from the CDB.
-		 */
-		overflow_buf = kmalloc(length - rx_size, GFP_KERNEL);
-		if (!overflow_buf) {
-			iscsit_unmap_iovec(cmd);
-			return IMMEDIATE_DATA_CANNOT_RECOVER;
-		}
-		cmd->overflow_buf = overflow_buf;
-		iov[iov_count].iov_base = overflow_buf;
-		iov[iov_count].iov_len = length - rx_size;
-		iov_count++;
-		rx_size = length;
-	}
 
 	padding = ((-length) & 3);
 	if (padding != 0) {
@@ -2628,7 +2597,6 @@ static int iscsit_handle_immediate_data(
 		rx_size += ISCSI_CRC_LEN;
 	}
 
-	WARN_ON_ONCE(iov_count > cmd->orig_iov_data_count);
 	rx_got = rx_data(conn, &cmd->iov_data[0], iov_count, rx_size);
 
 	iscsit_unmap_iovec(cmd);
@@ -3153,12 +3121,6 @@ int iscsit_build_r2ts_for_cmd(
 				else
 					xfer_len = conn->sess->sess_ops->MaxBurstLength;
 			}
-
-			if ((s32)xfer_len < 0) {
-				cmd->cmd_flags |= ICF_SENT_LAST_R2T;
-				break;
-			}
-
 			cmd->r2t_offset += xfer_len;
 
 			if (cmd->r2t_offset == cmd->se_cmd.data_length)

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Support for Sharp SL-C7xx PDAs
  * Models: SL-C700 (Corgi), SL-C750 (Shepherd), SL-C760 (Husky)
@@ -6,6 +5,11 @@
  * Copyright (c) 2004-2005 Richard Purdie
  *
  * Based on Sharp's 2.4 kernel patches/lubbock.c
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
  */
 
 #include <linux/kernel.h>

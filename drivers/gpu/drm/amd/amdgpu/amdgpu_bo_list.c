@@ -28,8 +28,7 @@
  *    Christian König <deathsimple@vodafone.de>
  */
 
-#include <linux/uaccess.h>
-
+#include <drm/drmP.h>
 #include "amdgpu.h"
 #include "amdgpu_trace.h"
 
@@ -82,9 +81,9 @@ int amdgpu_bo_list_create(struct amdgpu_device *adev, struct drm_file *filp,
 		return -ENOMEM;
 
 	kref_init(&list->refcount);
-	list->gds_obj = NULL;
-	list->gws_obj = NULL;
-	list->oa_obj = NULL;
+	list->gds_obj = adev->gds.gds_gfx_bo;
+	list->gws_obj = adev->gds.gws_gfx_bo;
+	list->oa_obj = adev->gds.oa_gfx_bo;
 
 	array = amdgpu_bo_list_array_entry(list, 0);
 	memset(array, 0, num_entries * sizeof(struct amdgpu_bo_list_entry));

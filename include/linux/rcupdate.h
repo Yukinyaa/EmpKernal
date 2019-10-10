@@ -56,12 +56,14 @@ void __rcu_read_unlock(void);
 
 static inline void __rcu_read_lock(void)
 {
-	preempt_disable();
+	if (IS_ENABLED(CONFIG_PREEMPT_COUNT))
+		preempt_disable();
 }
 
 static inline void __rcu_read_unlock(void)
 {
-	preempt_enable();
+	if (IS_ENABLED(CONFIG_PREEMPT_COUNT))
+		preempt_enable();
 }
 
 static inline int rcu_preempt_depth(void)
@@ -365,15 +367,16 @@ static inline void rcu_preempt_sleep_check(void) { }
  * other macros that it invokes.
  */
 #define rcu_assign_pointer(p, v)					      \
-do {									      \
+({									      \
 	uintptr_t _r_a_p__v = (uintptr_t)(v);				      \
-	rcu_check_sparse(p, __rcu);					      \
+	rcu_check_sparse(p, __rcu);				      \
 									      \
 	if (__builtin_constant_p(v) && (_r_a_p__v) == (uintptr_t)NULL)	      \
 		WRITE_ONCE((p), (typeof(p))(_r_a_p__v));		      \
 	else								      \
 		smp_store_release(&p, RCU_INITIALIZER((typeof(p))_r_a_p__v)); \
-} while (0)
+	_r_a_p__v;							      \
+})
 
 /**
  * rcu_swap_protected() - swap an RCU and a regular pointer
@@ -585,7 +588,7 @@ do {									      \
  * read-side critical sections may be preempted and they may also block, but
  * only when acquiring spinlocks that are subject to priority inheritance.
  */
-static __always_inline void rcu_read_lock(void)
+static inline void rcu_read_lock(void)
 {
 	__rcu_read_lock();
 	__acquire(RCU);
@@ -802,7 +805,7 @@ static inline notrace void rcu_read_unlock_sched_notrace(void)
 /**
  * kfree_rcu() - kfree an object after a grace period.
  * @ptr:	pointer to kfree
- * @rhf:	the name of the struct rcu_head within the type of @ptr.
+ * @rcu_head:	the name of the struct rcu_head within the type of @ptr.
  *
  * Many rcu callbacks functions just call kfree() on the base structure.
  * These functions are trivial, but their size adds up, and furthermore
@@ -825,13 +828,9 @@ static inline notrace void rcu_read_unlock_sched_notrace(void)
  * The BUILD_BUG_ON check must not involve any function calls, hence the
  * checks are done in macros here.
  */
-#define kfree_rcu(ptr, rhf)						\
-do {									\
-	typeof (ptr) ___p = (ptr);					\
-									\
-	if (___p)							\
-		__kfree_rcu(&((___p)->rhf), offsetof(typeof(*(ptr)), rhf)); \
-} while (0)
+#define kfree_rcu(ptr, rcu_head)					\
+	__kfree_rcu(&((ptr)->rcu_head), offsetof(typeof(*(ptr)), rcu_head))
+
 
 /*
  * Place this after a lock-acquisition primitive to guarantee that
@@ -879,11 +878,9 @@ static inline void rcu_head_init(struct rcu_head *rhp)
 static inline bool
 rcu_head_after_call_rcu(struct rcu_head *rhp, rcu_callback_t f)
 {
-	rcu_callback_t func = READ_ONCE(rhp->func);
-
-	if (func == f)
+	if (READ_ONCE(rhp->func) == f)
 		return true;
-	WARN_ON_ONCE(func != (rcu_callback_t)~0L);
+	WARN_ON_ONCE(READ_ONCE(rhp->func) != (rcu_callback_t)~0L);
 	return false;
 }
 

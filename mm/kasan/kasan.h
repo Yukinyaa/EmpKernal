@@ -43,11 +43,6 @@
 
 #define KASAN_ALLOCA_REDZONE_SIZE	32
 
-/*
- * Stack frame marker (compiler ABI).
- */
-#define KASAN_CURRENT_STACK_FRAME_MAGIC 0x41B58AB3
-
 /* Don't break randconfig/all*config builds */
 #ifndef KASAN_ABI_VERSION
 #define KASAN_ABI_VERSION 1
@@ -128,15 +123,7 @@ static inline bool addr_has_shadow(const void *addr)
 
 void kasan_poison_shadow(const void *address, size_t size, u8 value);
 
-/**
- * check_memory_region - Check memory region, and report if invalid access.
- * @addr: the accessed address
- * @size: the accessed size
- * @write: true if access is a write access
- * @ret_ip: return address
- * @return: true if access was valid, false if invalid
- */
-bool check_memory_region(unsigned long addr, size_t size, bool write,
+void check_memory_region(unsigned long addr, size_t size, bool write,
 				unsigned long ret_ip);
 
 void *find_first_bad_addr(void *addr, size_t size);

@@ -2744,7 +2744,8 @@ static int pma_get_opa_portstatus(struct opa_pma_mad *pmp,
 	u16 link_width;
 	u16 link_speed;
 
-	response_data_size = struct_size(rsp, vls, num_vls);
+	response_data_size = sizeof(struct opa_port_status_rsp) +
+				num_vls * sizeof(struct _vls_pctrs);
 	if (response_data_size > sizeof(pmp->data)) {
 		pmp->mad_hdr.status |= OPA_PM_STATUS_REQUEST_TOO_LARGE;
 		return reply((struct ib_mad_hdr *)pmp);
@@ -3013,7 +3014,8 @@ static int pma_get_opa_datacounters(struct opa_pma_mad *pmp,
 	}
 
 	/* Sanity check */
-	response_data_size = struct_size(req, port[0].vls, num_vls);
+	response_data_size = sizeof(struct opa_port_data_counters_msg) +
+				num_vls * sizeof(struct _vls_dctrs);
 
 	if (response_data_size > sizeof(pmp->data)) {
 		pmp->mad_hdr.status |= IB_SMP_INVALID_FIELD;
@@ -3230,7 +3232,8 @@ static int pma_get_opa_porterrors(struct opa_pma_mad *pmp,
 		return reply((struct ib_mad_hdr *)pmp);
 	}
 
-	response_data_size = struct_size(req, port[0].vls, num_vls);
+	response_data_size = sizeof(struct opa_port_error_counters64_msg) +
+				num_vls * sizeof(struct _vls_ectrs);
 
 	if (response_data_size > sizeof(pmp->data)) {
 		pmp->mad_hdr.status |= IB_SMP_INVALID_FIELD;

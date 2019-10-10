@@ -12,7 +12,6 @@
 #include "print_binary.h"
 #include "thread_map.h"
 #include "mmap.h"
-#include "util.h"
 
 #if PY_MAJOR_VERSION < 3
 #define _PyUnicode_FromString(arg) \
@@ -343,7 +342,7 @@ static bool is_tracepoint(struct pyrf_event *pevent)
 static PyObject*
 tracepoint_field(struct pyrf_event *pe, struct tep_format_field *field)
 {
-	struct tep_handle *pevent = field->event->tep;
+	struct tep_handle *pevent = field->event->pevent;
 	void *data = pe->sample.raw_data;
 	PyObject *ret = NULL;
 	unsigned long long val;

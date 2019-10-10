@@ -5,7 +5,7 @@
  * Copyright (c) 2002-3 Patrick Mochel
  * Copyright (c) 2002-3 Open Source Development Labs
  *
- * Please see Documentation/driver-api/driver-model/platform.rst for more
+ * Please see Documentation/driver-model/platform.txt for more
  * information.
  */
 
@@ -84,7 +84,7 @@ EXPORT_SYMBOL_GPL(platform_get_resource);
  *				    device
  *
  * @pdev: platform device to use both for memory resource lookup as well as
- *        resource management
+ *        resource managemend
  * @index: resource index
  */
 #ifdef CONFIG_HAS_IOMEM
@@ -157,13 +157,8 @@ int platform_get_irq(struct platform_device *dev, unsigned int num)
 	 * the device will only expose one IRQ, and this fallback
 	 * allows a common code path across either kind of resource.
 	 */
-	if (num == 0 && has_acpi_companion(&dev->dev)) {
-		int ret = acpi_dev_gpio_irq_get(ACPI_COMPANION(&dev->dev), num);
-
-		/* Our callers expect -ENXIO for missing IRQs. */
-		if (ret >= 0 || ret == -EPROBE_DEFER)
-			return ret;
-	}
+	if (num == 0 && has_acpi_companion(&dev->dev))
+		return acpi_dev_gpio_irq_get(ACPI_COMPANION(&dev->dev), num);
 
 	return -ENXIO;
 #endif
@@ -443,12 +438,10 @@ int platform_device_add(struct platform_device *pdev)
 				p = &ioport_resource;
 		}
 
-		if (p) {
-			ret = insert_resource(p, r);
-			if (ret) {
-				dev_err(&pdev->dev, "failed to claim resource %d: %pR\n", i, r);
-				goto failed;
-			}
+		if (p && insert_resource(p, r)) {
+			dev_err(&pdev->dev, "failed to claim resource %d: %pR\n", i, r);
+			ret = -EBUSY;
+			goto failed;
 		}
 	}
 

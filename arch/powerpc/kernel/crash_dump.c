@@ -1,10 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Routines for doing kexec-based kdump.
  *
  * Copyright (C) 2005, IBM Corp.
  *
  * Created by: Michael Ellerman
+ *
+ * This source code is licensed under the GNU General Public License,
+ * Version 2.  See the file COPYING for more details.
  */
 
 #undef DEBUG

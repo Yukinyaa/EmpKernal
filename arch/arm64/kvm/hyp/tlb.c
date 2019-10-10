@@ -1,7 +1,18 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2015 - ARM Ltd
  * Author: Marc Zyngier <marc.zyngier@arm.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/irqflags.h>
@@ -33,12 +44,12 @@ static void __hyp_text __tlb_switch_to_guest_vhe(struct kvm *kvm,
 		 * in the TCR_EL1 register. We also need to prevent it to
 		 * allocate IPA->PA walks, so we enable the S1 MMU...
 		 */
-		val = cxt->tcr = read_sysreg_el1(SYS_TCR);
+		val = cxt->tcr = read_sysreg_el1(tcr);
 		val |= TCR_EPD1_MASK | TCR_EPD0_MASK;
-		write_sysreg_el1(val, SYS_TCR);
-		val = cxt->sctlr = read_sysreg_el1(SYS_SCTLR);
+		write_sysreg_el1(val, tcr);
+		val = cxt->sctlr = read_sysreg_el1(sctlr);
 		val |= SCTLR_ELx_M;
-		write_sysreg_el1(val, SYS_SCTLR);
+		write_sysreg_el1(val, sctlr);
 	}
 
 	/*
@@ -85,8 +96,8 @@ static void __hyp_text __tlb_switch_to_host_vhe(struct kvm *kvm,
 
 	if (cpus_have_const_cap(ARM64_WORKAROUND_1165522)) {
 		/* Restore the registers to what they were */
-		write_sysreg_el1(cxt->tcr, SYS_TCR);
-		write_sysreg_el1(cxt->sctlr, SYS_SCTLR);
+		write_sysreg_el1(cxt->tcr, tcr);
+		write_sysreg_el1(cxt->sctlr, sctlr);
 	}
 
 	local_irq_restore(cxt->flags);

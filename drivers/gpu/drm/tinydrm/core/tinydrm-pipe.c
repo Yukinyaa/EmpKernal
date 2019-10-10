@@ -1,6 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C) 2016 Noralf Trønnes
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  */
 
 #include <drm/drm_atomic_helper.h>
@@ -9,7 +13,7 @@
 #include <drm/drm_modes.h>
 #include <drm/drm_probe_helper.h>
 #include <drm/drm_print.h>
-#include <drm/drm_simple_kms_helper.h>
+#include <drm/tinydrm/tinydrm.h>
 
 struct tinydrm_connector {
 	struct drm_connector base;
@@ -125,8 +129,7 @@ static int tinydrm_rotate_mode(struct drm_display_mode *mode,
 
 /**
  * tinydrm_display_pipe_init - Initialize display pipe
- * @drm: DRM device
- * @pipe: Display pipe
+ * @tdev: tinydrm device
  * @funcs: Display pipe functions
  * @connector_type: Connector type
  * @formats: Array of supported formats (DRM_FORMAT\_\*)
@@ -140,15 +143,16 @@ static int tinydrm_rotate_mode(struct drm_display_mode *mode,
  * Returns:
  * Zero on success, negative error code on failure.
  */
-int tinydrm_display_pipe_init(struct drm_device *drm,
-			      struct drm_simple_display_pipe *pipe,
-			      const struct drm_simple_display_pipe_funcs *funcs,
-			      int connector_type,
-			      const uint32_t *formats,
-			      unsigned int format_count,
-			      const struct drm_display_mode *mode,
-			      unsigned int rotation)
+int
+tinydrm_display_pipe_init(struct tinydrm_device *tdev,
+			  const struct drm_simple_display_pipe_funcs *funcs,
+			  int connector_type,
+			  const uint32_t *formats,
+			  unsigned int format_count,
+			  const struct drm_display_mode *mode,
+			  unsigned int rotation)
 {
+	struct drm_device *drm = tdev->drm;
 	struct drm_display_mode mode_copy;
 	struct drm_connector *connector;
 	int ret;
@@ -173,7 +177,7 @@ int tinydrm_display_pipe_init(struct drm_device *drm,
 	if (IS_ERR(connector))
 		return PTR_ERR(connector);
 
-	return drm_simple_display_pipe_init(drm, pipe, funcs, formats,
+	return drm_simple_display_pipe_init(drm, &tdev->pipe, funcs, formats,
 					    format_count, modifiers, connector);
 }
 EXPORT_SYMBOL(tinydrm_display_pipe_init);

@@ -825,10 +825,8 @@ ipipe_set_lum_adj_regs(void __iomem *base_addr, struct ipipe_lum_adj *lum_adj)
 	regw_ip(base_addr, val, YUV_ADJ);
 }
 
-inline u32 ipipe_s12q8(unsigned short decimal, short integer)
-{
-	return (decimal & 0xff) | ((integer & 0xf) << 8);
-}
+#define IPIPE_S12Q8(decimal, integer) \
+	(((decimal & 0xff) | ((integer & 0xf) << 8)))
 
 void ipipe_set_rgb2ycbcr_regs(void __iomem *base_addr,
 			      struct vpfe_ipipe_rgb2yuv *yuv)
@@ -837,23 +835,23 @@ void ipipe_set_rgb2ycbcr_regs(void __iomem *base_addr,
 
 	/* S10Q8 */
 	ipipe_clock_enable(base_addr);
-	val = ipipe_s12q8(yuv->coef_ry.decimal, yuv->coef_ry.integer);
+	val = IPIPE_S12Q8(yuv->coef_ry.decimal, yuv->coef_ry.integer);
 	regw_ip(base_addr, val, YUV_MUL_RY);
-	val = ipipe_s12q8(yuv->coef_gy.decimal, yuv->coef_gy.integer);
+	val = IPIPE_S12Q8(yuv->coef_gy.decimal, yuv->coef_gy.integer);
 	regw_ip(base_addr, val, YUV_MUL_GY);
-	val = ipipe_s12q8(yuv->coef_by.decimal, yuv->coef_by.integer);
+	val = IPIPE_S12Q8(yuv->coef_by.decimal, yuv->coef_by.integer);
 	regw_ip(base_addr, val, YUV_MUL_BY);
-	val = ipipe_s12q8(yuv->coef_rcb.decimal, yuv->coef_rcb.integer);
+	val = IPIPE_S12Q8(yuv->coef_rcb.decimal, yuv->coef_rcb.integer);
 	regw_ip(base_addr, val, YUV_MUL_RCB);
-	val = ipipe_s12q8(yuv->coef_gcb.decimal, yuv->coef_gcb.integer);
+	val = IPIPE_S12Q8(yuv->coef_gcb.decimal, yuv->coef_gcb.integer);
 	regw_ip(base_addr, val, YUV_MUL_GCB);
-	val = ipipe_s12q8(yuv->coef_bcb.decimal, yuv->coef_bcb.integer);
+	val = IPIPE_S12Q8(yuv->coef_bcb.decimal, yuv->coef_bcb.integer);
 	regw_ip(base_addr, val, YUV_MUL_BCB);
-	val = ipipe_s12q8(yuv->coef_rcr.decimal, yuv->coef_rcr.integer);
+	val = IPIPE_S12Q8(yuv->coef_rcr.decimal, yuv->coef_rcr.integer);
 	regw_ip(base_addr, val, YUV_MUL_RCR);
-	val = ipipe_s12q8(yuv->coef_gcr.decimal, yuv->coef_gcr.integer);
+	val = IPIPE_S12Q8(yuv->coef_gcr.decimal, yuv->coef_gcr.integer);
 	regw_ip(base_addr, val, YUV_MUL_GCR);
-	val = ipipe_s12q8(yuv->coef_bcr.decimal, yuv->coef_bcr.integer);
+	val = IPIPE_S12Q8(yuv->coef_bcr.decimal, yuv->coef_bcr.integer);
 	regw_ip(base_addr, val, YUV_MUL_BCR);
 	regw_ip(base_addr, yuv->out_ofst_y & RGB2YCBCR_OFST_MASK, YUV_OFT_Y);
 	regw_ip(base_addr, yuv->out_ofst_cb & RGB2YCBCR_OFST_MASK, YUV_OFT_CB);

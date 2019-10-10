@@ -1582,7 +1582,9 @@ static int fsl_ssi_probe(struct platform_device *pdev)
 		}
 	}
 
-	fsl_ssi_debugfs_create(&ssi->dbg_stats, dev);
+	ret = fsl_ssi_debugfs_create(&ssi->dbg_stats, dev);
+	if (ret)
+		goto error_asoc_register;
 
 	/* Initially configures SSI registers */
 	fsl_ssi_hw_init(ssi);

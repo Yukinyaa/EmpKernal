@@ -52,9 +52,10 @@ struct bnxt_qplib_srq {
 	struct bnxt_qplib_cq		*cq;
 	struct bnxt_qplib_hwq		hwq;
 	struct bnxt_qplib_swq		*swq;
+	struct scatterlist		*sglist;
 	int				start_idx;
 	int				last_idx;
-	struct bnxt_qplib_sg_info	sg_info;
+	u32				nmap;
 	u16				eventq_hw_ring_id;
 	spinlock_t			lock; /* protect SRQE link list */
 };
@@ -236,7 +237,8 @@ struct bnxt_qplib_swqe {
 struct bnxt_qplib_q {
 	struct bnxt_qplib_hwq		hwq;
 	struct bnxt_qplib_swq		*swq;
-	struct bnxt_qplib_sg_info	sg_info;
+	struct scatterlist		*sglist;
+	u32				nmap;
 	u32				max_wqe;
 	u16				q_full_delta;
 	u16				max_sge;
@@ -379,7 +381,8 @@ struct bnxt_qplib_cq {
 	u32				cnq_hw_ring_id;
 	struct bnxt_qplib_nq		*nq;
 	bool				resize_in_progress;
-	struct bnxt_qplib_sg_info	sg_info;
+	struct scatterlist		*sghead;
+	u32				nmap;
 	u64				cq_handle;
 
 #define CQ_RESIZE_WAIT_TIME_MS		500
@@ -518,8 +521,8 @@ int bnxt_qplib_modify_srq(struct bnxt_qplib_res *res,
 			  struct bnxt_qplib_srq *srq);
 int bnxt_qplib_query_srq(struct bnxt_qplib_res *res,
 			 struct bnxt_qplib_srq *srq);
-void bnxt_qplib_destroy_srq(struct bnxt_qplib_res *res,
-			    struct bnxt_qplib_srq *srq);
+int bnxt_qplib_destroy_srq(struct bnxt_qplib_res *res,
+			   struct bnxt_qplib_srq *srq);
 int bnxt_qplib_post_srq_recv(struct bnxt_qplib_srq *srq,
 			     struct bnxt_qplib_swqe *wqe);
 int bnxt_qplib_create_qp1(struct bnxt_qplib_res *res, struct bnxt_qplib_qp *qp);

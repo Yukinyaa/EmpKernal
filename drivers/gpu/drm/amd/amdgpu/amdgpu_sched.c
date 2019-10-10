@@ -23,11 +23,8 @@
  */
 
 #include <linux/fdtable.h>
-#include <linux/file.h>
 #include <linux/pid.h>
-
 #include <drm/amdgpu_drm.h>
-
 #include "amdgpu.h"
 
 #include "amdgpu_vm.h"
@@ -56,25 +53,26 @@ static int amdgpu_sched_process_priority_override(struct amdgpu_device *adev,
 						  int fd,
 						  enum drm_sched_priority priority)
 {
-	struct fd f = fdget(fd);
+	struct file *filp = fget(fd);
 	struct amdgpu_fpriv *fpriv;
 	struct amdgpu_ctx *ctx;
 	uint32_t id;
 	int r;
 
-	if (!f.file)
+	if (!filp)
 		return -EINVAL;
 
-	r = amdgpu_file_to_fpriv(f.file, &fpriv);
+	r = amdgpu_file_to_fpriv(filp, &fpriv);
 	if (r) {
-		fdput(f);
+		fput(filp);
 		return r;
 	}
 
 	idr_for_each_entry(&fpriv->ctx_mgr.ctx_handles, ctx, id)
 		amdgpu_ctx_priority_override(ctx, priority);
 
-	fdput(f);
+	fput(filp);
+
 	return 0;
 }
 
@@ -83,30 +81,30 @@ static int amdgpu_sched_context_priority_override(struct amdgpu_device *adev,
 						  unsigned ctx_id,
 						  enum drm_sched_priority priority)
 {
-	struct fd f = fdget(fd);
+	struct file *filp = fget(fd);
 	struct amdgpu_fpriv *fpriv;
 	struct amdgpu_ctx *ctx;
 	int r;
 
-	if (!f.file)
+	if (!filp)
 		return -EINVAL;
 
-	r = amdgpu_file_to_fpriv(f.file, &fpriv);
+	r = amdgpu_file_to_fpriv(filp, &fpriv);
 	if (r) {
-		fdput(f);
+		fput(filp);
 		return r;
 	}
 
 	ctx = amdgpu_ctx_get(fpriv, ctx_id);
 
 	if (!ctx) {
-		fdput(f);
+		fput(filp);
 		return -EINVAL;
 	}
 
 	amdgpu_ctx_priority_override(ctx, priority);
 	amdgpu_ctx_put(ctx);
-	fdput(f);
+	fput(filp);
 
 	return 0;
 }

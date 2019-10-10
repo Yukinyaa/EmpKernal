@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 #
 # Mellanox driver configuration
 #
@@ -27,7 +26,6 @@ config MLX4_EN_DCB
 config MLX4_CORE
 	tristate
 	depends on PCI
-	select NET_DEVLINK
 	default n
 
 config MLX4_DEBUG

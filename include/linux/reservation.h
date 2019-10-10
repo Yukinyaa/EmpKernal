@@ -216,12 +216,8 @@ reservation_object_unlock(struct reservation_object *obj)
 {
 #ifdef CONFIG_DEBUG_MUTEXES
 	/* Test shared fence slot reservation */
-	if (rcu_access_pointer(obj->fence)) {
-		struct reservation_object_list *fence =
-			reservation_object_get_list(obj);
-
-		fence->shared_max = fence->shared_count;
-	}
+	if (obj->fence)
+		obj->fence->shared_max = obj->fence->shared_count;
 #endif
 	ww_mutex_unlock(&obj->lock);
 }
@@ -232,8 +228,7 @@ reservation_object_unlock(struct reservation_object *obj)
  * @obj: the reservation object
  *
  * Returns the exclusive fence (if any).  Does NOT take a
- * reference. Writers must hold obj->lock, readers may only
- * hold a RCU read side lock.
+ * reference.  The obj->lock must be held.
  *
  * RETURNS
  * The exclusive fence or NULL

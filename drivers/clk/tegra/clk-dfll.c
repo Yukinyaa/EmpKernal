@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * clk-dfll.c - Tegra DFLL clock source common code
  *
@@ -6,6 +5,15 @@
  *
  * Aleksandr Frid <afrid@nvidia.com>
  * Paul Walmsley <pwalmsley@nvidia.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ * more details.
  *
  * This library is for the DVCO and DFLL IP blocks on the Tegra124
  * SoC. These IP blocks together are also known at NVIDIA as
@@ -26,6 +34,7 @@
  * CPU cycle time will vary. This has implications for
  * performance-measurement code and any code that relies on the CPU
  * cycle time to delay for a certain length of time.
+ *
  */
 
 #include <linux/clk.h>

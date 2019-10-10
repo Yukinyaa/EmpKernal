@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 #
 # Cirrus network device configuration
 #
@@ -42,7 +41,7 @@ config CS89x0_PLATFORM
 
 config EP93XX_ETH
 	tristate "EP93xx Ethernet support"
-	depends on (ARM && ARCH_EP93XX) || COMPILE_TEST
+	depends on ARM && ARCH_EP93XX
 	select MII
 	help
 	  This is a driver for the ethernet hardware included in EP93xx CPUs.

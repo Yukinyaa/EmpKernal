@@ -24,7 +24,7 @@
 #include <fcntl.h>
 #include <libgen.h>
 
-#include "libbpf.h"
+#include "bpf/libbpf.h"
 #include <bpf/bpf.h>
 
 

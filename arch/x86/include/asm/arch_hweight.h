@@ -12,6 +12,8 @@
 #define REG_OUT "a"
 #endif
 
+#define __HAVE_ARCH_SW_HWEIGHT
+
 static __always_inline unsigned int __arch_hweight32(unsigned int w)
 {
 	unsigned int res;

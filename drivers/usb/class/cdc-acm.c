@@ -468,6 +468,7 @@ static void acm_read_bulk_callback(struct urb *urb)
 {
 	struct acm_rb *rb = urb->context;
 	struct acm *acm = rb->instance;
+	unsigned long flags;
 	int status = urb->status;
 	bool stopped = false;
 	bool stalled = false;
@@ -524,10 +525,15 @@ static void acm_read_bulk_callback(struct urb *urb)
 		return;
 	}
 
-	if (test_bit(ACM_THROTTLED, &acm->flags))
-		return;
-
-	acm_submit_read_urb(acm, rb->index, GFP_ATOMIC);
+	/* throttle device if requested by tty */
+	spin_lock_irqsave(&acm->read_lock, flags);
+	acm->throttled = acm->throttle_req;
+	if (!acm->throttled) {
+		spin_unlock_irqrestore(&acm->read_lock, flags);
+		acm_submit_read_urb(acm, rb->index, GFP_ATOMIC);
+	} else {
+		spin_unlock_irqrestore(&acm->read_lock, flags);
+	}
 }
 
 /* data interface wrote those outgoing bytes */
@@ -664,7 +670,10 @@ static int acm_port_activate(struct tty_port *port, struct tty_struct *tty)
 	/*
 	 * Unthrottle device in case the TTY was closed while throttled.
 	 */
-	clear_bit(ACM_THROTTLED, &acm->flags);
+	spin_lock_irq(&acm->read_lock);
+	acm->throttled = 0;
+	acm->throttle_req = 0;
+	spin_unlock_irq(&acm->read_lock);
 
 	retval = acm_submit_read_urbs(acm, GFP_KERNEL);
 	if (retval)
@@ -832,19 +841,27 @@ static void acm_tty_throttle(struct tty_struct *tty)
 {
 	struct acm *acm = tty->driver_data;
 
-	set_bit(ACM_THROTTLED, &acm->flags);
+	spin_lock_irq(&acm->read_lock);
+	acm->throttle_req = 1;
+	spin_unlock_irq(&acm->read_lock);
 }
 
 static void acm_tty_unthrottle(struct tty_struct *tty)
 {
 	struct acm *acm = tty->driver_data;
+	unsigned int was_throttled;
 
-	clear_bit(ACM_THROTTLED, &acm->flags);
+	spin_lock_irq(&acm->read_lock);
+	was_throttled = acm->throttled;
+	acm->throttled = 0;
+	acm->throttle_req = 0;
+	spin_unlock_irq(&acm->read_lock);
 
 	/* Matches the smp_mb__after_atomic() in acm_read_bulk_callback(). */
 	smp_mb();
 
-	acm_submit_read_urbs(acm, GFP_KERNEL);
+	if (was_throttled)
+		acm_submit_read_urbs(acm, GFP_KERNEL);
 }
 
 static int acm_tty_break_ctl(struct tty_struct *tty, int state)
@@ -1301,6 +1318,10 @@ made_compressed_probe:
 	tty_port_init(&acm->port);
 	acm->port.ops = &acm_port_ops;
 
+	minor = acm_alloc_minor(acm);
+	if (minor < 0)
+		goto alloc_fail1;
+
 	ctrlsize = usb_endpoint_maxp(epctrl);
 	readsize = usb_endpoint_maxp(epread) *
 				(quirks == SINGLE_RX_URB ? 1 : 2);
@@ -1308,13 +1329,6 @@ made_compressed_probe:
 	acm->writesize = usb_endpoint_maxp(epwrite) * 20;
 	acm->control = control_interface;
 	acm->data = data_interface;
-
-	usb_get_intf(acm->control); /* undone in destruct() */
-
-	minor = acm_alloc_minor(acm);
-	if (minor < 0)
-		goto alloc_fail1;
-
 	acm->minor = minor;
 	acm->dev = usb_dev;
 	if (h.usb_cdc_acm_descriptor)
@@ -1461,6 +1475,7 @@ skip_countries:
 	usb_driver_claim_interface(&acm_driver, data_interface, acm);
 	usb_set_intfdata(data_interface, acm);
 
+	usb_get_intf(control_interface);
 	tty_dev = tty_port_register_device(&acm->port, acm_tty_driver, minor,
 			&control_interface->dev);
 	if (IS_ERR(tty_dev)) {

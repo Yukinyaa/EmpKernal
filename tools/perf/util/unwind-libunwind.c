@@ -5,7 +5,6 @@
 #include "session.h"
 #include "debug.h"
 #include "env.h"
-#include "callchain.h"
 
 struct unwind_libunwind_ops __weak *local_unwind_libunwind_ops;
 struct unwind_libunwind_ops __weak *x86_32_unwind_libunwind_ops;
@@ -24,9 +23,6 @@ int unwind__prepare_access(struct thread *thread, struct map *map,
 	enum dso_type dso_type;
 	struct unwind_libunwind_ops *ops = local_unwind_libunwind_ops;
 	int err;
-
-	if (!dwarf_callchain_users)
-		return 0;
 
 	if (thread->addr_space) {
 		pr_debug("unwind: thread map already set, dso=%s\n",
@@ -69,18 +65,12 @@ out_register:
 
 void unwind__flush_access(struct thread *thread)
 {
-	if (!dwarf_callchain_users)
-		return;
-
 	if (thread->unwind_libunwind_ops)
 		thread->unwind_libunwind_ops->flush_access(thread);
 }
 
 void unwind__finish_access(struct thread *thread)
 {
-	if (!dwarf_callchain_users)
-		return;
-
 	if (thread->unwind_libunwind_ops)
 		thread->unwind_libunwind_ops->finish_access(thread);
 }

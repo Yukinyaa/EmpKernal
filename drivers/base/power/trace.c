@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * drivers/base/power/trace.c
  *
@@ -7,6 +6,7 @@
  * Trace facility for suspend/resume problems, when none of the
  * devices may be working.
  */
+
 #define pr_fmt(fmt) "PM: " fmt
 
 #include <linux/pm-trace.h>

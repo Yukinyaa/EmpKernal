@@ -1,7 +1,10 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (C) 2012 Avionic Design GmbH
  * Copyright (C) 2012-2013 NVIDIA CORPORATION.  All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #ifndef HOST1X_DRM_H
@@ -124,7 +127,8 @@ struct tegra_output {
 	const struct edid *edid;
 	struct cec_notifier *cec;
 	unsigned int hpd_irq;
-	struct gpio_desc *hpd_gpio;
+	int hpd_gpio;
+	enum of_gpio_flags hpd_gpio_flags;
 
 	struct drm_encoder encoder;
 	struct drm_connector connector;

@@ -476,7 +476,7 @@ static void tipc_topsrv_accept(struct work_struct *work)
 	}
 }
 
-/* tipc_topsrv_listener_data_ready - interrupt callback with connection request
+/* tipc_toprsv_listener_data_ready - interrupt callback with connection request
  * The queued job is launched into tipc_topsrv_accept()
  */
 static void tipc_topsrv_listener_data_ready(struct sock *sk)
@@ -635,7 +635,7 @@ static void tipc_topsrv_work_stop(struct tipc_topsrv *s)
 	destroy_workqueue(s->send_wq);
 }
 
-static int tipc_topsrv_start(struct net *net)
+int tipc_topsrv_start(struct net *net)
 {
 	struct tipc_net *tn = tipc_net(net);
 	const char name[] = "topology_server";
@@ -668,7 +668,7 @@ static int tipc_topsrv_start(struct net *net)
 	return ret;
 }
 
-static void tipc_topsrv_stop(struct net *net)
+void tipc_topsrv_stop(struct net *net)
 {
 	struct tipc_topsrv *srv = tipc_topsrv(net);
 	struct socket *lsock = srv->listener;
@@ -692,14 +692,4 @@ static void tipc_topsrv_stop(struct net *net)
 	tipc_topsrv_work_stop(srv);
 	idr_destroy(&srv->conn_idr);
 	kfree(srv);
-}
-
-int __net_init tipc_topsrv_init_net(struct net *net)
-{
-	return tipc_topsrv_start(net);
-}
-
-void __net_exit tipc_topsrv_exit_net(struct net *net)
-{
-	tipc_topsrv_stop(net);
 }

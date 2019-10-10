@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  *  MQ Deadline i/o scheduler - adaptation of the legacy deadline scheduler,
  *  for the blk-mq scheduling framework
@@ -25,7 +24,7 @@
 #include "blk-mq-sched.h"
 
 /*
- * See Documentation/block/deadline-iosched.rst
+ * See Documentation/block/deadline-iosched.txt
  */
 static const int read_expire = HZ / 2;  /* max time before a read is submitted. */
 static const int write_expire = 5 * HZ; /* ditto for writes, these limits are SOFT! */
@@ -469,8 +468,7 @@ static int dd_request_merge(struct request_queue *q, struct request **rq,
 	return ELEVATOR_NO_MERGE;
 }
 
-static bool dd_bio_merge(struct blk_mq_hw_ctx *hctx, struct bio *bio,
-		unsigned int nr_segs)
+static bool dd_bio_merge(struct blk_mq_hw_ctx *hctx, struct bio *bio)
 {
 	struct request_queue *q = hctx->queue;
 	struct deadline_data *dd = q->elevator->elevator_data;
@@ -478,7 +476,7 @@ static bool dd_bio_merge(struct blk_mq_hw_ctx *hctx, struct bio *bio,
 	bool ret;
 
 	spin_lock(&dd->lock);
-	ret = blk_mq_sched_try_merge(q, bio, nr_segs, &free);
+	ret = blk_mq_sched_try_merge(q, bio, &free);
 	spin_unlock(&dd->lock);
 
 	if (free)

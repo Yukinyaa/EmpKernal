@@ -567,13 +567,16 @@
  */
 
 #define _FP_FRAC_ASSEMBLE_2(r, X, rsize)	\
-	(void) (((rsize) <= _FP_W_TYPE_SIZE)	\
-		? ({ (r) = X##_f0; })		\
-		: ({				\
-		     (r) = X##_f1;		\
-		     (r) <<= _FP_W_TYPE_SIZE;	\
-		     (r) += X##_f0;		\
-		    }))
+  do {						\
+    if (rsize <= _FP_W_TYPE_SIZE)		\
+      r = X##_f0;				\
+    else					\
+      {						\
+	r = X##_f1;				\
+	r <<= _FP_W_TYPE_SIZE;			\
+	r += X##_f0;				\
+      }						\
+  } while (0)
 
 #define _FP_FRAC_DISASSEMBLE_2(X, r, rsize)				\
   do {									\

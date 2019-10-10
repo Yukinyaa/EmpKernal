@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
    md.c : Multiple Devices driver for Linux
      Copyright (C) 1998, 1999, 2000 Ingo Molnar
@@ -23,6 +22,14 @@
    - persistent bitmap code
      Copyright (C) 2003-2004, Paul Clements, SteelEye Technology, Inc.
 
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; either version 2, or (at your option)
+   any later version.
+
+   You should have received a copy of the GNU General Public License
+   (for example /usr/src/linux/COPYING); if not, write to the Free
+   Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
    Errors, Warnings, etc.
    Please use:
@@ -37,7 +44,6 @@
 
 */
 
-#include <linux/sched/mm.h>
 #include <linux/sched/signal.h>
 #include <linux/kthread.h>
 #include <linux/blkdev.h>
@@ -82,7 +88,8 @@ static struct kobj_type md_ktype;
 
 struct md_cluster_operations *md_cluster_ops;
 EXPORT_SYMBOL(md_cluster_ops);
-static struct module *md_cluster_mod;
+struct module *md_cluster_mod;
+EXPORT_SYMBOL(md_cluster_mod);
 
 static DECLARE_WAIT_QUEUE_HEAD(resync_wait);
 static struct workqueue_struct *md_wq;
@@ -123,77 +130,6 @@ static inline int speed_max(struct mddev *mddev)
 {
 	return mddev->sync_speed_max ?
 		mddev->sync_speed_max : sysctl_speed_limit_max;
-}
-
-static int rdev_init_wb(struct md_rdev *rdev)
-{
-	if (rdev->bdev->bd_queue->nr_hw_queues == 1)
-		return 0;
-
-	spin_lock_init(&rdev->wb_list_lock);
-	INIT_LIST_HEAD(&rdev->wb_list);
-	init_waitqueue_head(&rdev->wb_io_wait);
-	set_bit(WBCollisionCheck, &rdev->flags);
-
-	return 1;
-}
-
-/*
- * Create wb_info_pool if rdev is the first multi-queue device flaged
- * with writemostly, also write-behind mode is enabled.
- */
-void mddev_create_wb_pool(struct mddev *mddev, struct md_rdev *rdev,
-			  bool is_suspend)
-{
-	if (mddev->bitmap_info.max_write_behind == 0)
-		return;
-
-	if (!test_bit(WriteMostly, &rdev->flags) || !rdev_init_wb(rdev))
-		return;
-
-	if (mddev->wb_info_pool == NULL) {
-		unsigned int noio_flag;
-
-		if (!is_suspend)
-			mddev_suspend(mddev);
-		noio_flag = memalloc_noio_save();
-		mddev->wb_info_pool = mempool_create_kmalloc_pool(NR_WB_INFOS,
-							sizeof(struct wb_info));
-		memalloc_noio_restore(noio_flag);
-		if (!mddev->wb_info_pool)
-			pr_err("can't alloc memory pool for writemostly\n");
-		if (!is_suspend)
-			mddev_resume(mddev);
-	}
-}
-EXPORT_SYMBOL_GPL(mddev_create_wb_pool);
-
-/*
- * destroy wb_info_pool if rdev is the last device flaged with WBCollisionCheck.
- */
-static void mddev_destroy_wb_pool(struct mddev *mddev, struct md_rdev *rdev)
-{
-	if (!test_and_clear_bit(WBCollisionCheck, &rdev->flags))
-		return;
-
-	if (mddev->wb_info_pool) {
-		struct md_rdev *temp;
-		int num = 0;
-
-		/*
-		 * Check if other rdevs need wb_info_pool.
-		 */
-		rdev_for_each(temp, mddev)
-			if (temp != rdev &&
-			    test_bit(WBCollisionCheck, &temp->flags))
-				num++;
-		if (!num) {
-			mddev_suspend(rdev->mddev);
-			mempool_destroy(mddev->wb_info_pool);
-			mddev->wb_info_pool = NULL;
-			mddev_resume(rdev->mddev);
-		}
-	}
 }
 
 static struct ctl_table_header *raid_table_header;
@@ -1170,7 +1106,8 @@ static int super_90_load(struct md_rdev *rdev, struct md_rdev *refdev, int minor
 	 * (not needed for Linear and RAID0 as metadata doesn't
 	 * record this size)
 	 */
-	if ((u64)rdev->sectors >= (2ULL << 32) && sb->level >= 1)
+	if (IS_ENABLED(CONFIG_LBDAF) && (u64)rdev->sectors >= (2ULL << 32) &&
+	    sb->level >= 1)
 		rdev->sectors = (sector_t)(2ULL << 32) - 2;
 
 	if (rdev->sectors < ((sector_t)sb->size) * 2 && sb->level >= 1)
@@ -1468,7 +1405,8 @@ super_90_rdev_size_change(struct md_rdev *rdev, sector_t num_sectors)
 	/* Limit to 4TB as metadata cannot record more than that.
 	 * 4TB == 2^32 KB, or 2*2^32 sectors.
 	 */
-	if ((u64)num_sectors >= (2ULL << 32) && rdev->mddev->level >= 1)
+	if (IS_ENABLED(CONFIG_LBDAF) && (u64)num_sectors >= (2ULL << 32) &&
+	    rdev->mddev->level >= 1)
 		num_sectors = (sector_t)(2ULL << 32) - 2;
 	do {
 		md_super_write(rdev->mddev, rdev, rdev->sb_start, rdev->sb_size,
@@ -1612,7 +1550,7 @@ static int super_1_load(struct md_rdev *rdev, struct md_rdev *refdev, int minor_
 		 */
 		s32 offset;
 		sector_t bb_sector;
-		__le64 *bbp;
+		u64 *bbp;
 		int i;
 		int sectors = le16_to_cpu(sb->bblog_size);
 		if (sectors > (PAGE_SIZE / 512))
@@ -1624,7 +1562,7 @@ static int super_1_load(struct md_rdev *rdev, struct md_rdev *refdev, int minor_
 		if (!sync_page_io(rdev, bb_sector, sectors << 9,
 				  rdev->bb_page, REQ_OP_READ, 0, true))
 			return -EIO;
-		bbp = (__le64 *)page_address(rdev->bb_page);
+		bbp = (u64 *)page_address(rdev->bb_page);
 		rdev->badblocks.shift = sb->bblog_shift;
 		for (i = 0 ; i < (sectors << (9-3)) ; i++, bbp++) {
 			u64 bb = le64_to_cpu(*bbp);
@@ -1936,7 +1874,7 @@ static void super_1_sync(struct mddev *mddev, struct md_rdev *rdev)
 		md_error(mddev, rdev);
 	else {
 		struct badblocks *bb = &rdev->badblocks;
-		__le64 *bbp = (__le64 *)page_address(rdev->bb_page);
+		u64 *bbp = (u64 *)page_address(rdev->bb_page);
 		u64 *p = bb->page;
 		sb->feature_map |= cpu_to_le32(MD_FEATURE_BAD_BLOCKS);
 		if (bb->changed) {
@@ -2282,9 +2220,6 @@ static int bind_rdev_to_array(struct md_rdev *rdev, struct mddev *mddev)
 	rdev->mddev = mddev;
 	pr_debug("md: bind<%s>\n", b);
 
-	if (mddev->raid_disks)
-		mddev_create_wb_pool(mddev, rdev, false);
-
 	if ((err = kobject_add(&rdev->kobj, &mddev->kobj, "dev-%s", b)))
 		goto fail;
 
@@ -2321,7 +2256,6 @@ static void unbind_rdev_from_array(struct md_rdev *rdev)
 	bd_unlink_disk_holder(rdev->bdev, rdev->mddev->gendisk);
 	list_del_rcu(&rdev->same_set);
 	pr_debug("md: unbind<%s>\n", bdevname(rdev->bdev,b));
-	mddev_destroy_wb_pool(rdev->mddev, rdev);
 	rdev->mddev = NULL;
 	sysfs_remove_link(&rdev->kobj, "block");
 	sysfs_put(rdev->sysfs_state);
@@ -2834,10 +2768,8 @@ state_store(struct md_rdev *rdev, const char *buf, size_t len)
 		}
 	} else if (cmd_match(buf, "writemostly")) {
 		set_bit(WriteMostly, &rdev->flags);
-		mddev_create_wb_pool(rdev->mddev, rdev, false);
 		err = 0;
 	} else if (cmd_match(buf, "-writemostly")) {
-		mddev_destroy_wb_pool(rdev->mddev, rdev);
 		clear_bit(WriteMostly, &rdev->flags);
 		err = 0;
 	} else if (cmd_match(buf, "blocked")) {
@@ -3434,7 +3366,7 @@ rdev_attr_show(struct kobject *kobj, struct attribute *attr, char *page)
 	if (!entry->show)
 		return -EIO;
 	if (!rdev->mddev)
-		return -ENODEV;
+		return -EBUSY;
 	return entry->show(rdev, page);
 }
 
@@ -3451,10 +3383,10 @@ rdev_attr_store(struct kobject *kobj, struct attribute *attr,
 		return -EIO;
 	if (!capable(CAP_SYS_ADMIN))
 		return -EACCES;
-	rv = mddev ? mddev_lock(mddev) : -ENODEV;
+	rv = mddev ? mddev_lock(mddev): -EBUSY;
 	if (!rv) {
 		if (rdev->mddev == NULL)
-			rv = -ENODEV;
+			rv = -EBUSY;
 		else
 			rv = entry->store(rdev, page, length);
 		mddev_unlock(mddev);
@@ -5316,8 +5248,7 @@ int mddev_init_writes_pending(struct mddev *mddev)
 {
 	if (mddev->writes_pending.percpu_count_ptr)
 		return 0;
-	if (percpu_ref_init(&mddev->writes_pending, no_op,
-			    PERCPU_REF_ALLOW_REINIT, GFP_KERNEL) < 0)
+	if (percpu_ref_init(&mddev->writes_pending, no_op, 0, GFP_KERNEL) < 0)
 		return -ENOMEM;
 	/* We want to start with the refcount at zero */
 	percpu_ref_put(&mddev->writes_pending);
@@ -5667,28 +5598,15 @@ int md_run(struct mddev *mddev)
 			mddev->bitmap = bitmap;
 
 	}
-	if (err)
-		goto bitmap_abort;
-
-	if (mddev->bitmap_info.max_write_behind > 0) {
-		bool creat_pool = false;
-
-		rdev_for_each(rdev, mddev) {
-			if (test_bit(WriteMostly, &rdev->flags) &&
-			    rdev_init_wb(rdev))
-				creat_pool = true;
-		}
-		if (creat_pool && mddev->wb_info_pool == NULL) {
-			mddev->wb_info_pool =
-				mempool_create_kmalloc_pool(NR_WB_INFOS,
-						    sizeof(struct wb_info));
-			if (!mddev->wb_info_pool) {
-				err = -ENOMEM;
-				goto bitmap_abort;
-			}
-		}
+	if (err) {
+		mddev_detach(mddev);
+		if (mddev->private)
+			pers->free(mddev, mddev->private);
+		mddev->private = NULL;
+		module_put(pers->owner);
+		md_bitmap_destroy(mddev);
+		goto abort;
 	}
-
 	if (mddev->queue) {
 		bool nonrot = true;
 
@@ -5731,7 +5649,8 @@ int md_run(struct mddev *mddev)
 	spin_unlock(&mddev->lock);
 	rdev_for_each(rdev, mddev)
 		if (rdev->raid_disk >= 0)
-			sysfs_link_rdev(mddev, rdev); /* failure here is OK */
+			if (sysfs_link_rdev(mddev, rdev))
+				/* failure here is OK */;
 
 	if (mddev->degraded && !mddev->ro)
 		/* This ensures that recovering status is reported immediately
@@ -5749,13 +5668,6 @@ int md_run(struct mddev *mddev)
 	sysfs_notify(&mddev->kobj, NULL, "degraded");
 	return 0;
 
-bitmap_abort:
-	mddev_detach(mddev);
-	if (mddev->private)
-		pers->free(mddev, mddev->private);
-	mddev->private = NULL;
-	module_put(pers->owner);
-	md_bitmap_destroy(mddev);
 abort:
 	bioset_exit(&mddev->bio_set);
 	bioset_exit(&mddev->sync_set);
@@ -5924,8 +5836,6 @@ static void __md_stop_writes(struct mddev *mddev)
 			mddev->in_sync = 1;
 		md_update_sb(mddev, 1);
 	}
-	mempool_destroy(mddev->wb_info_pool);
-	mddev->wb_info_pool = NULL;
 }
 
 void md_stop_writes(struct mddev *mddev)
@@ -7707,9 +7617,9 @@ static void status_unused(struct seq_file *seq)
 static int status_resync(struct seq_file *seq, struct mddev *mddev)
 {
 	sector_t max_sectors, resync, res;
-	unsigned long dt, db = 0;
-	sector_t rt, curr_mark_cnt, resync_mark_cnt;
-	int scale, recovery_active;
+	unsigned long dt, db;
+	sector_t rt;
+	int scale;
 	unsigned int per_milli;
 
 	if (test_bit(MD_RECOVERY_SYNC, &mddev->recovery) ||
@@ -7798,30 +7708,22 @@ static int status_resync(struct seq_file *seq, struct mddev *mddev)
 	 * db: blocks written from mark until now
 	 * rt: remaining time
 	 *
-	 * rt is a sector_t, which is always 64bit now. We are keeping
-	 * the original algorithm, but it is not really necessary.
-	 *
-	 * Original algorithm:
-	 *   So we divide before multiply in case it is 32bit and close
-	 *   to the limit.
-	 *   We scale the divisor (db) by 32 to avoid losing precision
-	 *   near the end of resync when the number of remaining sectors
-	 *   is close to 'db'.
-	 *   We then divide rt by 32 after multiplying by db to compensate.
-	 *   The '+1' avoids division by zero if db is very small.
+	 * rt is a sector_t, so could be 32bit or 64bit.
+	 * So we divide before multiply in case it is 32bit and close
+	 * to the limit.
+	 * We scale the divisor (db) by 32 to avoid losing precision
+	 * near the end of resync when the number of remaining sectors
+	 * is close to 'db'.
+	 * We then divide rt by 32 after multiplying by db to compensate.
+	 * The '+1' avoids division by zero if db is very small.
 	 */
 	dt = ((jiffies - mddev->resync_mark) / HZ);
 	if (!dt) dt++;
-
-	curr_mark_cnt = mddev->curr_mark_cnt;
-	recovery_active = atomic_read(&mddev->recovery_active);
-	resync_mark_cnt = mddev->resync_mark_cnt;
-
-	if (curr_mark_cnt >= (recovery_active + resync_mark_cnt))
-		db = curr_mark_cnt - (recovery_active + resync_mark_cnt);
+	db = (mddev->curr_mark_cnt - atomic_read(&mddev->recovery_active))
+		- mddev->resync_mark_cnt;
 
 	rt = max_sectors - resync;    /* number of remaining sectors */
-	rt = div64_u64(rt, db/32+1);
+	sector_div(rt, db/32+1);
 	rt *= dt;
 	rt >>= 5;
 
@@ -8298,7 +8200,8 @@ void md_do_sync(struct md_thread *thread)
 {
 	struct mddev *mddev = thread->mddev;
 	struct mddev *mddev2;
-	unsigned int currspeed = 0, window;
+	unsigned int currspeed = 0,
+		 window;
 	sector_t max_sectors,j, io_sectors, recovery_done;
 	unsigned long mark[SYNC_MARKS];
 	unsigned long update_time;
@@ -8355,7 +8258,7 @@ void md_do_sync(struct md_thread *thread)
 	 * 0 == not engaged in resync at all
 	 * 2 == checking that there is no conflict with another sync
 	 * 1 == like 2, but have yielded to allow conflicting resync to
-	 *		commence
+	 *		commense
 	 * other == active in resync - this many blocks
 	 *
 	 * Before starting a resync we must have set curr_resync to
@@ -8486,7 +8389,7 @@ void md_do_sync(struct md_thread *thread)
 	/*
 	 * Tune reconstruction:
 	 */
-	window = 32 * (PAGE_SIZE / 512);
+	window = 32*(PAGE_SIZE/512);
 	pr_debug("md: using %dk window, over a total of %lluk.\n",
 		 window/2, (unsigned long long)max_sectors/2);
 
@@ -9299,6 +9202,7 @@ static void check_sb_changes(struct mddev *mddev, struct md_rdev *rdev)
 				 * perform resync with the new activated disk */
 				set_bit(MD_RECOVERY_NEEDED, &mddev->recovery);
 				md_wakeup_thread(mddev->thread);
+
 			}
 			/* device faulty
 			 * We just want to do the minimum to mark the disk

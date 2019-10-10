@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Dynamic DMA mapping support for AMD Hammer.
  *
@@ -9,6 +8,7 @@
  * See Documentation/DMA-API-HOWTO.txt for the interface specification.
  *
  * Copyright 2002 Andi Kleen, SuSE Labs.
+ * Subject to the GNU General Public License v2 only.
  */
 
 #include <linux/types.h>
@@ -233,6 +233,9 @@ static dma_addr_t gart_map_page(struct device *dev, struct page *page,
 	unsigned long bus;
 	phys_addr_t paddr = page_to_phys(page) + offset;
 
+	if (!dev)
+		dev = &x86_dma_fallback_dev;
+
 	if (!need_iommu(dev, paddr, size))
 		return paddr;
 
@@ -388,6 +391,9 @@ static int gart_map_sg(struct device *dev, struct scatterlist *sg, int nents,
 
 	if (nents == 0)
 		return 0;
+
+	if (!dev)
+		dev = &x86_dma_fallback_dev;
 
 	out		= 0;
 	start		= 0;

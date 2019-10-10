@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
 **  System Bus Adapter (SBA) I/O MMU manager
 **
@@ -8,6 +7,10 @@
 **
 **	Portions (c) 1999 Dave S. Miller (from sparc64 I/O MMU code)
 **
+**	This program is free software; you can redistribute it and/or modify
+**	it under the terms of the GNU General Public License as published by
+**      the Free Software Foundation; either version 2 of the License, or
+**      (at your option) any later version.
 **
 **
 ** This module initializes the IOC (I/O Controller) found on B1000/C3000/
@@ -569,10 +572,11 @@ sba_io_pdir_entry(u64 *pdir_ptr, space_t sid, unsigned long vba,
 	u64 pa; /* physical address */
 	register unsigned ci; /* coherent index */
 
-	pa = lpa(vba);
+	pa = virt_to_phys(vba);
 	pa &= IOVP_MASK;
 
-	asm("lci 0(%1), %0" : "=r" (ci) : "r" (vba));
+	mtsp(sid,1);
+	asm("lci 0(%%sr1, %1), %0" : "=r" (ci) : "r" (vba));
 	pa |= (ci >> PAGE_SHIFT) & 0xff;  /* move CI (8 bits) into lowest byte */
 
 	pa |= SBA_PDIR_VALID_BIT;	/* set "valid" bit */

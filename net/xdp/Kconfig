@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 config XDP_SOCKETS
 	bool "XDP sockets"
 	depends on BPF_SYSCALL

@@ -523,9 +523,8 @@ int hw_device_reset(struct ci_hdrc *ci)
 	hw_write(ci, OP_USBMODE, USBMODE_SLOM, USBMODE_SLOM);
 
 	if (hw_read(ci, OP_USBMODE, USBMODE_CM) != USBMODE_CM_DC) {
-		dev_err(ci->dev, "cannot enter in %s device mode\n",
-			ci_role(ci)->name);
-		dev_err(ci->dev, "lpm = %i\n", ci->hw_bank.lpm);
+		pr_err("cannot enter in %s device mode", ci_role(ci)->name);
+		pr_err("lpm = %i", ci->hw_bank.lpm);
 		return -ENODEV;
 	}
 

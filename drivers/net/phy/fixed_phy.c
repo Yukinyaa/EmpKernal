@@ -216,10 +216,8 @@ static struct gpio_desc *fixed_phy_get_gpiod(struct device_node *np)
 	if (IS_ERR(gpiod)) {
 		if (PTR_ERR(gpiod) == -EPROBE_DEFER)
 			return gpiod;
-
-		if (PTR_ERR(gpiod) != -ENOENT)
-			pr_err("error getting GPIO for fixed link %pOF, proceed without\n",
-			       fixed_link_node);
+		pr_err("error getting GPIO for fixed link %pOF, proceed without\n",
+		       fixed_link_node);
 		gpiod = NULL;
 	}
 
@@ -303,7 +301,7 @@ static struct phy_device *__fixed_phy_register(unsigned int irq,
 				 phy->supported);
 	}
 
-	phy_advertise_supported(phy);
+	linkmode_copy(phy->advertising, phy->supported);
 
 	ret = phy_device_register(phy);
 	if (ret) {

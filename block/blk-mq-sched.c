@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * blk-mq scheduling framework
  *
@@ -224,7 +223,7 @@ void blk_mq_sched_dispatch_requests(struct blk_mq_hw_ctx *hctx)
 }
 
 bool blk_mq_sched_try_merge(struct request_queue *q, struct bio *bio,
-		unsigned int nr_segs, struct request **merged_request)
+			    struct request **merged_request)
 {
 	struct request *rq;
 
@@ -232,7 +231,7 @@ bool blk_mq_sched_try_merge(struct request_queue *q, struct bio *bio,
 	case ELEVATOR_BACK_MERGE:
 		if (!blk_mq_sched_allow_merge(q, rq, bio))
 			return false;
-		if (!bio_attempt_back_merge(rq, bio, nr_segs))
+		if (!bio_attempt_back_merge(q, rq, bio))
 			return false;
 		*merged_request = attempt_back_merge(q, rq);
 		if (!*merged_request)
@@ -241,7 +240,7 @@ bool blk_mq_sched_try_merge(struct request_queue *q, struct bio *bio,
 	case ELEVATOR_FRONT_MERGE:
 		if (!blk_mq_sched_allow_merge(q, rq, bio))
 			return false;
-		if (!bio_attempt_front_merge(rq, bio, nr_segs))
+		if (!bio_attempt_front_merge(q, rq, bio))
 			return false;
 		*merged_request = attempt_front_merge(q, rq);
 		if (!*merged_request)
@@ -260,7 +259,7 @@ EXPORT_SYMBOL_GPL(blk_mq_sched_try_merge);
  * of them.
  */
 bool blk_mq_bio_list_merge(struct request_queue *q, struct list_head *list,
-			   struct bio *bio, unsigned int nr_segs)
+			   struct bio *bio)
 {
 	struct request *rq;
 	int checked = 8;
@@ -277,13 +276,11 @@ bool blk_mq_bio_list_merge(struct request_queue *q, struct list_head *list,
 		switch (blk_try_merge(rq, bio)) {
 		case ELEVATOR_BACK_MERGE:
 			if (blk_mq_sched_allow_merge(q, rq, bio))
-				merged = bio_attempt_back_merge(rq, bio,
-						nr_segs);
+				merged = bio_attempt_back_merge(q, rq, bio);
 			break;
 		case ELEVATOR_FRONT_MERGE:
 			if (blk_mq_sched_allow_merge(q, rq, bio))
-				merged = bio_attempt_front_merge(rq, bio,
-						nr_segs);
+				merged = bio_attempt_front_merge(q, rq, bio);
 			break;
 		case ELEVATOR_DISCARD_MERGE:
 			merged = bio_attempt_discard_merge(q, rq, bio);
@@ -306,14 +303,13 @@ EXPORT_SYMBOL_GPL(blk_mq_bio_list_merge);
  */
 static bool blk_mq_attempt_merge(struct request_queue *q,
 				 struct blk_mq_hw_ctx *hctx,
-				 struct blk_mq_ctx *ctx, struct bio *bio,
-				 unsigned int nr_segs)
+				 struct blk_mq_ctx *ctx, struct bio *bio)
 {
 	enum hctx_type type = hctx->type;
 
 	lockdep_assert_held(&ctx->lock);
 
-	if (blk_mq_bio_list_merge(q, &ctx->rq_lists[type], bio, nr_segs)) {
+	if (blk_mq_bio_list_merge(q, &ctx->rq_lists[type], bio)) {
 		ctx->rq_merged++;
 		return true;
 	}
@@ -321,8 +317,7 @@ static bool blk_mq_attempt_merge(struct request_queue *q,
 	return false;
 }
 
-bool __blk_mq_sched_bio_merge(struct request_queue *q, struct bio *bio,
-		unsigned int nr_segs)
+bool __blk_mq_sched_bio_merge(struct request_queue *q, struct bio *bio)
 {
 	struct elevator_queue *e = q->elevator;
 	struct blk_mq_ctx *ctx = blk_mq_get_ctx(q);
@@ -330,18 +325,21 @@ bool __blk_mq_sched_bio_merge(struct request_queue *q, struct bio *bio,
 	bool ret = false;
 	enum hctx_type type;
 
-	if (e && e->type->ops.bio_merge)
-		return e->type->ops.bio_merge(hctx, bio, nr_segs);
+	if (e && e->type->ops.bio_merge) {
+		blk_mq_put_ctx(ctx);
+		return e->type->ops.bio_merge(hctx, bio);
+	}
 
 	type = hctx->type;
 	if ((hctx->flags & BLK_MQ_F_SHOULD_MERGE) &&
 			!list_empty_careful(&ctx->rq_lists[type])) {
 		/* default per sw-queue merge */
 		spin_lock(&ctx->lock);
-		ret = blk_mq_attempt_merge(q, hctx, ctx, bio, nr_segs);
+		ret = blk_mq_attempt_merge(q, hctx, ctx, bio);
 		spin_unlock(&ctx->lock);
 	}
 
+	blk_mq_put_ctx(ctx);
 	return ret;
 }
 
@@ -415,14 +413,6 @@ void blk_mq_sched_insert_requests(struct blk_mq_hw_ctx *hctx,
 				  struct list_head *list, bool run_queue_async)
 {
 	struct elevator_queue *e;
-	struct request_queue *q = hctx->queue;
-
-	/*
-	 * blk_mq_sched_insert_requests() is called from flush plug
-	 * context only, and hold one usage counter to prevent queue
-	 * from being released.
-	 */
-	percpu_ref_get(&q->q_usage_counter);
 
 	e = hctx->queue->elevator;
 	if (e && e->type->ops.insert_requests)
@@ -436,14 +426,12 @@ void blk_mq_sched_insert_requests(struct blk_mq_hw_ctx *hctx,
 		if (!hctx->dispatch_busy && !e && !run_queue_async) {
 			blk_mq_try_issue_list_directly(hctx, list);
 			if (list_empty(list))
-				goto out;
+				return;
 		}
 		blk_mq_insert_requests(hctx, ctx, list);
 	}
 
 	blk_mq_run_hw_queue(hctx, run_queue_async);
- out:
-	percpu_ref_put(&q->q_usage_counter);
 }
 
 static void blk_mq_sched_free_tags(struct blk_mq_tag_set *set,
@@ -476,18 +464,14 @@ static int blk_mq_sched_alloc_tags(struct request_queue *q,
 	return ret;
 }
 
-/* called in queue's release handler, tagset has gone away */
 static void blk_mq_sched_tags_teardown(struct request_queue *q)
 {
+	struct blk_mq_tag_set *set = q->tag_set;
 	struct blk_mq_hw_ctx *hctx;
 	int i;
 
-	queue_for_each_hw_ctx(q, hctx, i) {
-		if (hctx->sched_tags) {
-			blk_mq_free_rq_map(hctx->sched_tags);
-			hctx->sched_tags = NULL;
-		}
-	}
+	queue_for_each_hw_ctx(q, hctx, i)
+		blk_mq_sched_free_tags(set, hctx, i);
 }
 
 int blk_mq_init_sched(struct request_queue *q, struct elevator_type *e)
@@ -528,7 +512,6 @@ int blk_mq_init_sched(struct request_queue *q, struct elevator_type *e)
 			ret = e->ops.init_hctx(hctx, i);
 			if (ret) {
 				eq = q->elevator;
-				blk_mq_sched_free_requests(q);
 				blk_mq_exit_sched(q, eq);
 				kobject_put(&eq->kobj);
 				return ret;
@@ -540,27 +523,9 @@ int blk_mq_init_sched(struct request_queue *q, struct elevator_type *e)
 	return 0;
 
 err:
-	blk_mq_sched_free_requests(q);
 	blk_mq_sched_tags_teardown(q);
 	q->elevator = NULL;
 	return ret;
-}
-
-/*
- * called in either blk_queue_cleanup or elevator_switch, tagset
- * is required for freeing requests
- */
-void blk_mq_sched_free_requests(struct request_queue *q)
-{
-	struct blk_mq_hw_ctx *hctx;
-	int i;
-
-	lockdep_assert_held(&q->sysfs_lock);
-
-	queue_for_each_hw_ctx(q, hctx, i) {
-		if (hctx->sched_tags)
-			blk_mq_free_rqs(q->tag_set, hctx->sched_tags, i);
-	}
 }
 
 void blk_mq_exit_sched(struct request_queue *q, struct elevator_queue *e)

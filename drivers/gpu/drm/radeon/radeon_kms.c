@@ -25,20 +25,15 @@
  *          Alex Deucher
  *          Jerome Glisse
  */
-
-#include <linux/pm_runtime.h>
-#include <linux/slab.h>
-#include <linux/uaccess.h>
-#include <linux/vga_switcheroo.h>
-
+#include <drm/drmP.h>
 #include <drm/drm_fb_helper.h>
-#include <drm/drm_file.h>
-#include <drm/drm_ioctl.h>
-#include <drm/drm_pci.h>
-#include <drm/radeon_drm.h>
-
 #include "radeon.h"
+#include <drm/radeon_drm.h>
 #include "radeon_asic.h"
+
+#include <linux/vga_switcheroo.h>
+#include <linux/slab.h>
+#include <linux/pm_runtime.h>
 
 #if defined(CONFIG_VGA_SWITCHEROO)
 bool radeon_has_atpx(void);

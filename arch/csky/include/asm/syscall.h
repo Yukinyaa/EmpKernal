@@ -8,19 +8,10 @@
 #include <abi/regdef.h>
 #include <uapi/linux/audit.h>
 
-extern void *sys_call_table[];
-
 static inline int
 syscall_get_nr(struct task_struct *task, struct pt_regs *regs)
 {
 	return regs_syscallid(regs);
-}
-
-static inline void
-syscall_set_nr(struct task_struct *task, struct pt_regs *regs,
-	       int sysno)
-{
-	regs_syscallid(regs) = sysno;
 }
 
 static inline void
@@ -69,7 +60,7 @@ syscall_set_arguments(struct task_struct *task, struct pt_regs *regs,
 }
 
 static inline int
-syscall_get_arch(struct task_struct *task)
+syscall_get_arch(void)
 {
 	return AUDIT_ARCH_CSKY;
 }

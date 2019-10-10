@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * menu.c - the menu idle governor
  *
@@ -6,6 +5,9 @@
  * Copyright (C) 2009 Intel Corporation
  * Author:
  *        Arjan van de Ven <arjan@linux.intel.com>
+ *
+ * This code is licenced under the GPL version 2 as described
+ * in the COPYING file that acompanies the Linux Kernel.
  */
 
 #include <linux/kernel.h>

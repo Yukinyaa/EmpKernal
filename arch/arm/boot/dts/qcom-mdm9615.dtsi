@@ -326,7 +326,6 @@
 					interrupt-controller;
 					#interrupt-cells = <2>;
 					gpio-controller;
-					gpio-ranges = <&pmicgpio 0 0 6>;
 					#gpio-cells = <2>;
 				};
 			};

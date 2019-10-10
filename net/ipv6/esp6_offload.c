@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * IPV6 GSO/GRO offload support
  * Linux INET implementation
  *
  * Copyright (C) 2016 secunet Security Networks AG
  * Author: Steffen Klassert <steffen.klassert@secunet.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
  *
  * ESP GRO support
  */
@@ -133,44 +136,6 @@ static void esp6_gso_encap(struct xfrm_state *x, struct sk_buff *skb)
 	xo->proto = proto;
 }
 
-static struct sk_buff *xfrm6_tunnel_gso_segment(struct xfrm_state *x,
-						struct sk_buff *skb,
-						netdev_features_t features)
-{
-	__skb_push(skb, skb->mac_len);
-	return skb_mac_gso_segment(skb, features);
-}
-
-static struct sk_buff *xfrm6_transport_gso_segment(struct xfrm_state *x,
-						   struct sk_buff *skb,
-						   netdev_features_t features)
-{
-	const struct net_offload *ops;
-	struct sk_buff *segs = ERR_PTR(-EINVAL);
-	struct xfrm_offload *xo = xfrm_offload(skb);
-
-	skb->transport_header += x->props.header_len;
-	ops = rcu_dereference(inet6_offloads[xo->proto]);
-	if (likely(ops && ops->callbacks.gso_segment))
-		segs = ops->callbacks.gso_segment(skb, features);
-
-	return segs;
-}
-
-static struct sk_buff *xfrm6_outer_mode_gso_segment(struct xfrm_state *x,
-						    struct sk_buff *skb,
-						    netdev_features_t features)
-{
-	switch (x->outer_mode.encap) {
-	case XFRM_MODE_TUNNEL:
-		return xfrm6_tunnel_gso_segment(x, skb, features);
-	case XFRM_MODE_TRANSPORT:
-		return xfrm6_transport_gso_segment(x, skb, features);
-	}
-
-	return ERR_PTR(-EOPNOTSUPP);
-}
-
 static struct sk_buff *esp6_gso_segment(struct sk_buff *skb,
 				        netdev_features_t features)
 {
@@ -209,7 +174,7 @@ static struct sk_buff *esp6_gso_segment(struct sk_buff *skb,
 
 	xo->flags |= XFRM_GSO_SEGMENT;
 
-	return xfrm6_outer_mode_gso_segment(x, skb, esp_features);
+	return x->outer_mode->gso_segment(x, skb, esp_features);
 }
 
 static int esp6_input_tail(struct xfrm_state *x, struct sk_buff *skb)
@@ -336,7 +301,9 @@ static int __init esp6_offload_init(void)
 
 static void __exit esp6_offload_exit(void)
 {
-	xfrm_unregister_type_offload(&esp6_type_offload, AF_INET6);
+	if (xfrm_unregister_type_offload(&esp6_type_offload, AF_INET6) < 0)
+		pr_info("%s: can't remove xfrm type offload\n", __func__);
+
 	inet6_del_offload(&esp6_offload, IPPROTO_ESP);
 }
 

@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 ifeq ($(CONFIG_CPU_HAS_CACHEV2),y)
 obj-y +=			cachev2.o
 else
@@ -12,5 +11,3 @@ obj-y +=			init.o
 obj-y +=			ioremap.o
 obj-y +=			syscache.o
 obj-y +=			tlb.o
-obj-y +=			asid.o
-obj-y +=			context.o

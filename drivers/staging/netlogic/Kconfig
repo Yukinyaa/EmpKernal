@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0
 config NETLOGIC_XLR_NET
 	tristate "Netlogic XLR/XLS network device"
 	depends on CPU_XLR

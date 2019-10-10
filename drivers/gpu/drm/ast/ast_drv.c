@@ -205,7 +205,13 @@ static struct pci_driver ast_pci_driver = {
 
 static const struct file_operations ast_fops = {
 	.owner = THIS_MODULE,
-	DRM_VRAM_MM_FILE_OPERATIONS
+	.open = drm_open,
+	.release = drm_release,
+	.unlocked_ioctl = drm_ioctl,
+	.mmap = ast_mmap,
+	.poll = drm_poll,
+	.compat_ioctl = drm_compat_ioctl,
+	.read = drm_read,
 };
 
 static struct drm_driver driver = {
@@ -222,7 +228,10 @@ static struct drm_driver driver = {
 	.minor = DRIVER_MINOR,
 	.patchlevel = DRIVER_PATCHLEVEL,
 
-	DRM_GEM_VRAM_DRIVER
+	.gem_free_object_unlocked = ast_gem_free_object,
+	.dumb_create = ast_dumb_create,
+	.dumb_map_offset = ast_dumb_mmap_offset,
+
 };
 
 static int __init ast_init(void)

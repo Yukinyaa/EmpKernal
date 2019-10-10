@@ -1,10 +1,13 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * wm5102.c  --  WM5102 ALSA SoC Audio driver
  *
  * Copyright 2012 Wolfson Microelectronics plc
  *
  * Author: Mark Brown <broonie@opensource.wolfsonmicro.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/module.h>
@@ -643,8 +646,6 @@ static int wm5102_adsp_power_ev(struct snd_soc_dapm_widget *w,
 				return ret;
 			}
 		}
-
-		wm_adsp2_set_dspclk(w, v);
 		break;
 
 	case SND_SOC_DAPM_POST_PMD:
@@ -658,7 +659,7 @@ static int wm5102_adsp_power_ev(struct snd_soc_dapm_widget *w,
 		break;
 	}
 
-	return wm_adsp_early_event(w, kcontrol, event);
+	return wm_adsp2_early_event(w, kcontrol, event, v);
 }
 
 static int wm5102_out_comp_coeff_get(struct snd_kcontrol *kcontrol,

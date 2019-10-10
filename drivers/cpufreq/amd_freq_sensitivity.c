@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * amd_freq_sensitivity.c: AMD frequency sensitivity feedback powersave bias
  *                         for the ondemand governor.
@@ -6,6 +5,10 @@
  * Copyright (C) 2013 Advanced Micro Devices, Inc.
  *
  * Author: Jacob Shin <jacob.shin@amd.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/kernel.h>
@@ -121,7 +124,7 @@ static int __init amd_freq_sensitivity_init(void)
 			PCI_DEVICE_ID_AMD_KERNCZ_SMBUS, NULL);
 
 	if (!pcidev) {
-		if (!boot_cpu_has(X86_FEATURE_PROC_FEEDBACK))
+		if (!static_cpu_has(X86_FEATURE_PROC_FEEDBACK))
 			return -ENODEV;
 	}
 

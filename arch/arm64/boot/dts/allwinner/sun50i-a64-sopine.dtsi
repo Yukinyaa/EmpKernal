@@ -48,7 +48,7 @@
 #include <dt-bindings/gpio/gpio.h>
 
 &codec_analog {
-	cpvdd-supply = <&reg_eldo1>;
+	hpvcc-supply = <&reg_eldo1>;
 };
 
 &mmc0 {

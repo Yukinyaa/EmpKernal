@@ -1,6 +1,6 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2012 The Chromium OS Authors. All rights reserved.
+ * Use of this source code is governed by the GPLv2 license.
  *
  * Test code for seccomp bpf.
  */
@@ -1775,18 +1775,13 @@ void tracer_ptrace(struct __test_metadata *_metadata, pid_t tracee,
 	unsigned long msg;
 	static bool entry;
 
-	/*
-	 * The traditional way to tell PTRACE_SYSCALL entry/exit
-	 * is by counting.
-	 */
-	entry = !entry;
-
-	/* Make sure we got an appropriate message. */
+	/* Make sure we got an empty message. */
 	ret = ptrace(PTRACE_GETEVENTMSG, tracee, NULL, &msg);
 	EXPECT_EQ(0, ret);
-	EXPECT_EQ(entry ? PTRACE_EVENTMSG_SYSCALL_ENTRY
-			: PTRACE_EVENTMSG_SYSCALL_EXIT, msg);
+	EXPECT_EQ(0, msg);
 
+	/* The only way to tell PTRACE_SYSCALL entry/exit is by counting. */
+	entry = !entry;
 	if (!entry)
 		return;
 

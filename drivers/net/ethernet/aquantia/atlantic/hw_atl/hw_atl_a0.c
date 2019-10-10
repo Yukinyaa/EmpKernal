@@ -1,7 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * aQuantia Corporation Network Driver
  * Copyright (C) 2014-2017 aQuantia Corporation. All rights reserved
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
  */
 
 /* File hw_atl_a0.c: Definition of Atlantic hardware specific functions. */
@@ -347,10 +350,10 @@ err_exit:
 static int hw_atl_a0_hw_init(struct aq_hw_s *self, u8 *mac_addr)
 {
 	static u32 aq_hw_atl_igcr_table_[4][2] = {
-		[AQ_HW_IRQ_INVALID] = { 0x20000000U, 0x20000000U },
-		[AQ_HW_IRQ_LEGACY]  = { 0x20000080U, 0x20000080U },
-		[AQ_HW_IRQ_MSI]     = { 0x20000021U, 0x20000025U },
-		[AQ_HW_IRQ_MSIX]    = { 0x20000022U, 0x20000026U },
+		{ 0x20000000U, 0x20000000U }, /* AQ_IRQ_INVALID */
+		{ 0x20000080U, 0x20000080U }, /* AQ_IRQ_LEGACY */
+		{ 0x20000021U, 0x20000025U }, /* AQ_IRQ_MSI */
+		{ 0x20000022U, 0x20000026U }  /* AQ_IRQ_MSIX */
 	};
 
 	int err = 0;
@@ -451,7 +454,7 @@ static int hw_atl_a0_hw_ring_tx_xmit(struct aq_hw_s *self,
 
 		buff = &ring->buff_ring[ring->sw_tail];
 
-		if (buff->is_gso) {
+		if (buff->is_txc) {
 			txd->ctl |= (buff->len_l3 << 31) |
 				(buff->len_l2 << 24) |
 				HW_ATL_A0_TXD_CTL_CMD_TCP |
@@ -616,6 +619,8 @@ err_exit:
 static int hw_atl_a0_hw_ring_rx_receive(struct aq_hw_s *self,
 					struct aq_ring_s *ring)
 {
+	struct device *ndev = aq_nic_get_dev(ring->aq_nic);
+
 	for (; ring->hw_head != ring->sw_tail;
 		ring->hw_head = aq_ring_next_dx(ring, ring->hw_head)) {
 		struct aq_ring_buff_s *buff = NULL;
@@ -681,6 +686,8 @@ static int hw_atl_a0_hw_ring_rx_receive(struct aq_hw_s *self,
 
 		is_err &= ~0x18U;
 		is_err &= ~0x04U;
+
+		dma_unmap_page(ndev, buff->pa, buff->len, DMA_FROM_DEVICE);
 
 		if (is_err || rxd_wb->type & 0x1000U) {
 			/* status error or DMA error */

@@ -121,16 +121,10 @@ static void tick_sched_do_timer(struct tick_sched *ts, ktime_t now)
 	 * into a long sleep. If two CPUs happen to assign themselves to
 	 * this duty, then the jiffies update is still serialized by
 	 * jiffies_lock.
-	 *
-	 * If nohz_full is enabled, this should not happen because the
-	 * tick_do_timer_cpu never relinquishes.
 	 */
-	if (unlikely(tick_do_timer_cpu == TICK_DO_TIMER_NONE)) {
-#ifdef CONFIG_NO_HZ_FULL
-		WARN_ON(tick_nohz_full_running);
-#endif
+	if (unlikely(tick_do_timer_cpu == TICK_DO_TIMER_NONE)
+	    && !tick_nohz_full_cpu(cpu))
 		tick_do_timer_cpu = cpu;
-	}
 #endif
 
 	/* Check, if the jiffies need an update */
@@ -401,8 +395,8 @@ void __init tick_nohz_full_setup(cpumask_var_t cpumask)
 static int tick_nohz_cpu_down(unsigned int cpu)
 {
 	/*
-	 * The tick_do_timer_cpu CPU handles housekeeping duty (unbound
-	 * timers, workqueues, timekeeping, ...) on behalf of full dynticks
+	 * The boot CPU handles housekeeping duty (unbound timers,
+	 * workqueues, timekeeping, ...) on behalf of full dynticks
 	 * CPUs. It must remain online when nohz full is enabled.
 	 */
 	if (tick_nohz_full_running && tick_do_timer_cpu == cpu)
@@ -429,15 +423,12 @@ void __init tick_nohz_init(void)
 		return;
 	}
 
-	if (IS_ENABLED(CONFIG_PM_SLEEP_SMP) &&
-			!IS_ENABLED(CONFIG_PM_SLEEP_SMP_NONZERO_CPU)) {
-		cpu = smp_processor_id();
+	cpu = smp_processor_id();
 
-		if (cpumask_test_cpu(cpu, tick_nohz_full_mask)) {
-			pr_warn("NO_HZ: Clearing %d from nohz_full range "
-				"for timekeeping\n", cpu);
-			cpumask_clear_cpu(cpu, tick_nohz_full_mask);
-		}
+	if (cpumask_test_cpu(cpu, tick_nohz_full_mask)) {
+		pr_warn("NO_HZ: Clearing %d from nohz_full range for timekeeping\n",
+			cpu);
+		cpumask_clear_cpu(cpu, tick_nohz_full_mask);
 	}
 
 	for_each_cpu(cpu, tick_nohz_full_mask)
@@ -654,8 +645,7 @@ static inline bool local_timer_softirq_pending(void)
 static ktime_t tick_nohz_next_event(struct tick_sched *ts, int cpu)
 {
 	u64 basemono, next_tick, next_tmr, next_rcu, delta, expires;
-	unsigned long basejiff;
-	unsigned int seq;
+	unsigned long seq, basejiff;
 
 	/* Read jiffies and the time when jiffies were updated last */
 	do {
@@ -782,6 +772,7 @@ static void tick_nohz_stop_tick(struct tick_sched *ts, int cpu)
 	 */
 	if (!ts->tick_stopped) {
 		calc_load_nohz_start();
+		cpu_load_update_nohz_start();
 		quiet_vmstat();
 
 		ts->last_tick = hrtimer_get_expires(&ts->sched_timer);
@@ -828,6 +819,7 @@ static void tick_nohz_restart_sched_tick(struct tick_sched *ts, ktime_t now)
 {
 	/* Update jiffies first */
 	tick_do_update_jiffies64(now);
+	cpu_load_update_nohz_stop();
 
 	/*
 	 * Clear the timer idle flag, so we avoid IPIs on remote queueing and
@@ -912,13 +904,8 @@ static bool can_stop_idle_tick(int cpu, struct tick_sched *ts)
 		/*
 		 * Boot safety: make sure the timekeeping duty has been
 		 * assigned before entering dyntick-idle mode,
-		 * tick_do_timer_cpu is TICK_DO_TIMER_BOOT
 		 */
-		if (unlikely(tick_do_timer_cpu == TICK_DO_TIMER_BOOT))
-			return false;
-
-		/* Should not happen for nohz-full */
-		if (WARN_ON_ONCE(tick_do_timer_cpu == TICK_DO_TIMER_NONE))
+		if (tick_do_timer_cpu == TICK_DO_TIMER_NONE)
 			return false;
 	}
 
@@ -1033,18 +1020,6 @@ bool tick_nohz_idle_got_tick(void)
 		return true;
 	}
 	return false;
-}
-
-/**
- * tick_nohz_get_next_hrtimer - return the next expiration time for the hrtimer
- * or the tick, whatever that expires first. Note that, if the tick has been
- * stopped, it returns the next hrtimer.
- *
- * Called from power state control code with interrupts disabled
- */
-ktime_t tick_nohz_get_next_hrtimer(void)
-{
-	return __this_cpu_read(tick_cpu_device.evtdev)->next_event;
 }
 
 /**

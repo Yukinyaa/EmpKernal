@@ -1,6 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  *  hdac_i915.c - routines for sync between HD-A core and i915 display driver
+ *
+ *  This program is free software; you can redistribute it and/or modify it
+ *  under the terms of the GNU General Public License as published by the Free
+ *  Software Foundation; either version 2 of the License, or (at your option)
+ *  any later version.
+ *
+ *  This program is distributed in the hope that it will be useful, but
+ *  WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+ *  or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+ *  for more details.
  */
 
 #include <linux/init.h>
@@ -136,12 +145,10 @@ int snd_hdac_i915_init(struct hdac_bus *bus)
 	if (!acomp)
 		return -ENODEV;
 	if (!acomp->ops) {
-		if (!IS_ENABLED(CONFIG_MODULES) ||
-		    !request_module("i915")) {
-			/* 60s timeout */
-			wait_for_completion_timeout(&bind_complete,
-						   msecs_to_jiffies(60 * 1000));
-		}
+		request_module("i915");
+		/* 60s timeout */
+		wait_for_completion_timeout(&bind_complete,
+					    msecs_to_jiffies(60 * 1000));
 	}
 	if (!acomp->ops) {
 		dev_info(bus->dev, "couldn't bind with audio component\n");

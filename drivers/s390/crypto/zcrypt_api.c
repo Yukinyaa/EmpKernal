@@ -525,7 +525,7 @@ static int zcrypt_open(struct inode *inode, struct file *filp)
 	filp->private_data = (void *) perms;
 
 	atomic_inc(&zcrypt_open_count);
-	return stream_open(inode, filp);
+	return nonseekable_open(inode, filp);
 }
 
 /**
@@ -659,7 +659,6 @@ static long zcrypt_rsa_modexpo(struct ap_perms *perms,
 	trace_s390_zcrypt_req(mex, TP_ICARSAMODEXPO);
 
 	if (mex->outputdatalength < mex->inputdatalength) {
-		func_code = 0;
 		rc = -EINVAL;
 		goto out;
 	}
@@ -743,7 +742,6 @@ static long zcrypt_rsa_crt(struct ap_perms *perms,
 	trace_s390_zcrypt_req(crt, TP_ICARSACRT);
 
 	if (crt->outputdatalength < crt->inputdatalength) {
-		func_code = 0;
 		rc = -EINVAL;
 		goto out;
 	}
@@ -822,7 +820,7 @@ static long _zcrypt_send_cprb(struct ap_perms *perms,
 	struct ap_message ap_msg;
 	unsigned int weight, pref_weight;
 	unsigned int func_code;
-	unsigned short *domain, tdom;
+	unsigned short *domain;
 	int qid = 0, rc = -ENODEV;
 	struct module *mod;
 
@@ -833,17 +831,6 @@ static long _zcrypt_send_cprb(struct ap_perms *perms,
 	rc = get_cprb_fc(xcRB, &ap_msg, &func_code, &domain);
 	if (rc)
 		goto out;
-
-	/*
-	 * If a valid target domain is set and this domain is NOT a usage
-	 * domain but a control only domain, use the default domain as target.
-	 */
-	tdom = *domain;
-	if (tdom >= 0 && tdom < AP_DOMAINS &&
-	    !ap_test_config_usage_domain(tdom) &&
-	    ap_test_config_ctrl_domain(tdom) &&
-	    ap_domain_index >= 0)
-		tdom = ap_domain_index;
 
 	pref_zc = NULL;
 	pref_zq = NULL;
@@ -867,8 +854,8 @@ static long _zcrypt_send_cprb(struct ap_perms *perms,
 			/* check if device is online and eligible */
 			if (!zq->online ||
 			    !zq->ops->send_cprb ||
-			    (tdom != (unsigned short) AUTOSELECT &&
-			     tdom != AP_QID_QUEUE(zq->queue->qid)))
+			    ((*domain != (unsigned short) AUTOSELECT) &&
+			     (*domain != AP_QID_QUEUE(zq->queue->qid))))
 				continue;
 			/* check if device node has admission for this queue */
 			if (!zcrypt_check_queue(perms,
@@ -964,7 +951,6 @@ static long zcrypt_send_ep11_cprb(struct ap_perms *perms,
 
 		targets = kcalloc(target_num, sizeof(*targets), GFP_KERNEL);
 		if (!targets) {
-			func_code = 0;
 			rc = -ENOMEM;
 			goto out;
 		}
@@ -972,7 +958,6 @@ static long zcrypt_send_ep11_cprb(struct ap_perms *perms,
 		uptr = (struct ep11_target_dev __force __user *) xcrb->targets;
 		if (copy_from_user(targets, uptr,
 				   target_num * sizeof(*targets))) {
-			func_code = 0;
 			rc = -EFAULT;
 			goto out_free;
 		}

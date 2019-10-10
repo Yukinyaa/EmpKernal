@@ -38,7 +38,6 @@ EXPORT_SYMBOL(qman_dma_portal);
 #define CONFIG_FSL_DPA_PIRQ_FAST  1
 
 static struct cpumask portal_cpus;
-static int __qman_portals_probed;
 /* protect qman global registers and global data shared among portals */
 static DEFINE_SPINLOCK(qman_lock);
 
@@ -221,12 +220,6 @@ static int qman_online_cpu(unsigned int cpu)
 	return 0;
 }
 
-int qman_portals_probed(void)
-{
-	return __qman_portals_probed;
-}
-EXPORT_SYMBOL_GPL(qman_portals_probed);
-
 static int qman_portal_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -245,10 +238,8 @@ static int qman_portal_probe(struct platform_device *pdev)
 	}
 
 	pcfg = devm_kmalloc(dev, sizeof(*pcfg), GFP_KERNEL);
-	if (!pcfg) {
-		__qman_portals_probed = -1;
+	if (!pcfg)
 		return -ENOMEM;
-	}
 
 	pcfg->dev = dev;
 
@@ -256,20 +247,19 @@ static int qman_portal_probe(struct platform_device *pdev)
 					     DPAA_PORTAL_CE);
 	if (!addr_phys[0]) {
 		dev_err(dev, "Can't get %pOF property 'reg::CE'\n", node);
-		goto err_ioremap1;
+		return -ENXIO;
 	}
 
 	addr_phys[1] = platform_get_resource(pdev, IORESOURCE_MEM,
 					     DPAA_PORTAL_CI);
 	if (!addr_phys[1]) {
 		dev_err(dev, "Can't get %pOF property 'reg::CI'\n", node);
-		goto err_ioremap1;
+		return -ENXIO;
 	}
 
 	err = of_property_read_u32(node, "cell-index", &val);
 	if (err) {
 		dev_err(dev, "Can't get %pOF property 'cell-index'\n", node);
-		__qman_portals_probed = -1;
 		return err;
 	}
 	pcfg->channel = val;
@@ -277,7 +267,7 @@ static int qman_portal_probe(struct platform_device *pdev)
 	irq = platform_get_irq(pdev, 0);
 	if (irq <= 0) {
 		dev_err(dev, "Can't get %pOF IRQ\n", node);
-		goto err_ioremap1;
+		return -ENXIO;
 	}
 	pcfg->irq = irq;
 
@@ -301,7 +291,6 @@ static int qman_portal_probe(struct platform_device *pdev)
 	spin_lock(&qman_lock);
 	cpu = cpumask_next_zero(-1, &portal_cpus);
 	if (cpu >= nr_cpu_ids) {
-		__qman_portals_probed = 1;
 		/* unassigned portal, skip init */
 		spin_unlock(&qman_lock);
 		return 0;
@@ -332,8 +321,6 @@ err_portal_init:
 err_ioremap2:
 	memunmap(pcfg->addr_virt_ce);
 err_ioremap1:
-	__qman_portals_probed = -1;
-
 	return -ENXIO;
 }
 

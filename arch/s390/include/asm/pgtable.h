@@ -238,7 +238,7 @@ static inline int is_module_addr(void *addr)
 #define _REGION_ENTRY_NOEXEC	0x100	/* region no-execute bit	    */
 #define _REGION_ENTRY_OFFSET	0xc0	/* region table offset		    */
 #define _REGION_ENTRY_INVALID	0x20	/* invalid region table entry	    */
-#define _REGION_ENTRY_TYPE_MASK	0x0c	/* region table type mask	    */
+#define _REGION_ENTRY_TYPE_MASK	0x0c	/* region/segment table type mask   */
 #define _REGION_ENTRY_TYPE_R1	0x0c	/* region first table type	    */
 #define _REGION_ENTRY_TYPE_R2	0x08	/* region second table type	    */
 #define _REGION_ENTRY_TYPE_R3	0x04	/* region third table type	    */
@@ -277,7 +277,6 @@ static inline int is_module_addr(void *addr)
 #define _SEGMENT_ENTRY_PROTECT	0x200	/* segment protection bit	    */
 #define _SEGMENT_ENTRY_NOEXEC	0x100	/* segment no-execute bit	    */
 #define _SEGMENT_ENTRY_INVALID	0x20	/* invalid segment table entry	    */
-#define _SEGMENT_ENTRY_TYPE_MASK 0x0c	/* segment table type mask	    */
 
 #define _SEGMENT_ENTRY		(0)
 #define _SEGMENT_ENTRY_EMPTY	(_SEGMENT_ENTRY_INVALID)
@@ -615,9 +614,15 @@ static inline int pgd_none(pgd_t pgd)
 
 static inline int pgd_bad(pgd_t pgd)
 {
-	if ((pgd_val(pgd) & _REGION_ENTRY_TYPE_MASK) < _REGION_ENTRY_TYPE_R1)
-		return 0;
-	return (pgd_val(pgd) & ~_REGION_ENTRY_BITS) != 0;
+	/*
+	 * With dynamic page table levels the pgd can be a region table
+	 * entry or a segment table entry. Check for the bit that are
+	 * invalid for either table entry.
+	 */
+	unsigned long mask =
+		~_SEGMENT_ENTRY_ORIGIN & ~_REGION_ENTRY_INVALID &
+		~_REGION_ENTRY_TYPE_MASK & ~_REGION_ENTRY_LENGTH;
+	return (pgd_val(pgd) & mask) != 0;
 }
 
 static inline unsigned long pgd_pfn(pgd_t pgd)
@@ -698,8 +703,6 @@ static inline int pmd_large(pmd_t pmd)
 
 static inline int pmd_bad(pmd_t pmd)
 {
-	if ((pmd_val(pmd) & _SEGMENT_ENTRY_TYPE_MASK) > 0)
-		return 1;
 	if (pmd_large(pmd))
 		return (pmd_val(pmd) & ~_SEGMENT_ENTRY_BITS_LARGE) != 0;
 	return (pmd_val(pmd) & ~_SEGMENT_ENTRY_BITS) != 0;
@@ -707,12 +710,8 @@ static inline int pmd_bad(pmd_t pmd)
 
 static inline int pud_bad(pud_t pud)
 {
-	unsigned long type = pud_val(pud) & _REGION_ENTRY_TYPE_MASK;
-
-	if (type > _REGION_ENTRY_TYPE_R3)
-		return 1;
-	if (type < _REGION_ENTRY_TYPE_R3)
-		return 0;
+	if ((pud_val(pud) & _REGION_ENTRY_TYPE_MASK) < _REGION_ENTRY_TYPE_R3)
+		return pmd_bad(__pmd(pud_val(pud)));
 	if (pud_large(pud))
 		return (pud_val(pud) & ~_REGION_ENTRY_BITS_LARGE) != 0;
 	return (pud_val(pud) & ~_REGION_ENTRY_BITS) != 0;
@@ -720,12 +719,8 @@ static inline int pud_bad(pud_t pud)
 
 static inline int p4d_bad(p4d_t p4d)
 {
-	unsigned long type = p4d_val(p4d) & _REGION_ENTRY_TYPE_MASK;
-
-	if (type > _REGION_ENTRY_TYPE_R2)
-		return 1;
-	if (type < _REGION_ENTRY_TYPE_R2)
-		return 0;
+	if ((p4d_val(p4d) & _REGION_ENTRY_TYPE_MASK) < _REGION_ENTRY_TYPE_R2)
+		return pud_bad(__pud(p4d_val(p4d)));
 	return (p4d_val(p4d) & ~_REGION_ENTRY_BITS) != 0;
 }
 
@@ -1270,8 +1265,14 @@ static inline pte_t *pte_offset(pmd_t *pmd, unsigned long address)
 #define pte_offset_map(pmd, address) pte_offset_kernel(pmd, address)
 #define pte_unmap(pte) do { } while (0)
 
-static inline bool gup_fast_permitted(unsigned long start, unsigned long end)
+static inline bool gup_fast_permitted(unsigned long start, int nr_pages)
 {
+	unsigned long len, end;
+
+	len = (unsigned long) nr_pages << PAGE_SHIFT;
+	end = start + len;
+	if (end < start)
+		return false;
 	return end <= current->mm->context.asce_limit;
 }
 #define gup_fast_permitted gup_fast_permitted

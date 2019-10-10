@@ -28,6 +28,7 @@
  *    Christian König <christian.koenig@amd.com>
  */
 
+#include <drm/drmP.h>
 #include "amdgpu.h"
 #include "amdgpu_trace.h"
 #include "amdgpu_amdkfd.h"

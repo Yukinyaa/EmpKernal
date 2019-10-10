@@ -140,3 +140,4 @@
 #define mmPSOC_SPI_RSVD_2                                            0xC430FC
 
 #endif /* ASIC_REG_PSOC_SPI_REGS_H_ */
+

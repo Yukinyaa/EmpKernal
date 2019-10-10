@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Add configfs and memory store: Kyungchan Koh <kkc6196@fb.com> and
  * Shaohua Li <shli@fb.com>
@@ -327,12 +326,11 @@ static ssize_t nullb_device_power_store(struct config_item *item,
 		set_bit(NULLB_DEV_FL_CONFIGURED, &dev->flags);
 		dev->power = newp;
 	} else if (dev->power && !newp) {
-		if (test_and_clear_bit(NULLB_DEV_FL_UP, &dev->flags)) {
-			mutex_lock(&lock);
-			dev->power = newp;
-			null_del_dev(dev->nullb);
-			mutex_unlock(&lock);
-		}
+		mutex_lock(&lock);
+		dev->power = newp;
+		null_del_dev(dev->nullb);
+		mutex_unlock(&lock);
+		clear_bit(NULLB_DEV_FL_UP, &dev->flags);
 		clear_bit(NULLB_DEV_FL_CONFIGURED, &dev->flags);
 	}
 
@@ -1198,7 +1196,7 @@ static blk_status_t null_handle_cmd(struct nullb_cmd *cmd)
 	if (!cmd->error && dev->zoned) {
 		sector_t sector;
 		unsigned int nr_sectors;
-		enum req_opf op;
+		int op;
 
 		if (dev->queue_mode == NULL_Q_BIO) {
 			op = bio_op(cmd->bio);
@@ -1489,6 +1487,7 @@ static int setup_queues(struct nullb *nullb)
 	if (!nullb->queues)
 		return -ENOMEM;
 
+	nullb->nr_queues = 0;
 	nullb->queue_depth = nullb->dev->hw_queue_depth;
 
 	return 0;

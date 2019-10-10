@@ -4,8 +4,6 @@
  * Copyright © 2018 Intel Corporation
  */
 
-#include "gem/selftests/igt_gem_utils.h"
-
 #include "igt_spinner.h"
 
 int igt_spinner_init(struct igt_spinner *spin, struct drm_i915_private *i915)
@@ -31,7 +29,7 @@ int igt_spinner_init(struct igt_spinner *spin, struct drm_i915_private *i915)
 		goto err_hws;
 	}
 
-	i915_gem_object_set_cache_coherency(spin->hws, I915_CACHE_LLC);
+	i915_gem_object_set_cache_level(spin->hws, I915_CACHE_LLC);
 	vaddr = i915_gem_object_pin_map(spin->hws, I915_MAP_WB);
 	if (IS_ERR(vaddr)) {
 		err = PTR_ERR(vaddr);
@@ -76,11 +74,16 @@ static int move_to_active(struct i915_vma *vma,
 {
 	int err;
 
-	i915_vma_lock(vma);
 	err = i915_vma_move_to_active(vma, rq, flags);
-	i915_vma_unlock(vma);
+	if (err)
+		return err;
 
-	return err;
+	if (!i915_gem_object_has_active_reference(vma->obj)) {
+		i915_gem_object_get(vma->obj);
+		i915_gem_object_set_active_reference(vma->obj);
+	}
+
+	return 0;
 }
 
 struct i915_request *
@@ -89,16 +92,17 @@ igt_spinner_create_request(struct igt_spinner *spin,
 			   struct intel_engine_cs *engine,
 			   u32 arbitration_command)
 {
+	struct i915_address_space *vm = &ctx->ppgtt->vm;
 	struct i915_request *rq = NULL;
 	struct i915_vma *hws, *vma;
 	u32 *batch;
 	int err;
 
-	vma = i915_vma_instance(spin->obj, ctx->vm, NULL);
+	vma = i915_vma_instance(spin->obj, vm, NULL);
 	if (IS_ERR(vma))
 		return ERR_CAST(vma);
 
-	hws = i915_vma_instance(spin->hws, ctx->vm, NULL);
+	hws = i915_vma_instance(spin->hws, vm, NULL);
 	if (IS_ERR(hws))
 		return ERR_CAST(hws);
 
@@ -110,7 +114,7 @@ igt_spinner_create_request(struct igt_spinner *spin,
 	if (err)
 		goto unpin_vma;
 
-	rq = igt_request_alloc(ctx, engine);
+	rq = i915_request_alloc(engine, ctx);
 	if (IS_ERR(rq)) {
 		err = PTR_ERR(rq);
 		goto unpin_hws;
@@ -139,13 +143,6 @@ igt_spinner_create_request(struct igt_spinner *spin,
 	*batch++ = MI_BATCH_BUFFER_END; /* not reached */
 
 	i915_gem_chipset_flush(spin->i915);
-
-	if (engine->emit_init_breadcrumb &&
-	    rq->timeline->has_initial_breadcrumb) {
-		err = engine->emit_init_breadcrumb(rq);
-		if (err)
-			goto cancel_rq;
-	}
 
 	err = engine->emit_bb_start(rq, vma->node.start, PAGE_SIZE, 0);
 

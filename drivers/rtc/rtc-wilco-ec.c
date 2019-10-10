@@ -21,20 +21,8 @@
 #define EC_CMOS_TOD_WRITE		0x02
 #define EC_CMOS_TOD_READ		0x08
 
-/* Message sent to the EC to request the current time. */
-struct ec_rtc_read_request {
-	u8 command;
-	u8 reserved;
-	u8 param;
-} __packed;
-static struct ec_rtc_read_request read_rq = {
-	.command = EC_COMMAND_CMOS,
-	.param = EC_CMOS_TOD_READ,
-};
-
 /**
- * struct ec_rtc_read_response - Format of RTC returned by EC.
- * @reserved: Unused byte
+ * struct ec_rtc_read - Format of RTC returned by EC.
  * @second: Second value (0..59)
  * @minute: Minute value (0..59)
  * @hour: Hour value (0..23)
@@ -45,8 +33,7 @@ static struct ec_rtc_read_request read_rq = {
  *
  * All values are presented in binary (not BCD).
  */
-struct ec_rtc_read_response {
-	u8 reserved;
+struct ec_rtc_read {
 	u8 second;
 	u8 minute;
 	u8 hour;
@@ -57,10 +44,8 @@ struct ec_rtc_read_response {
 } __packed;
 
 /**
- * struct ec_rtc_write_request - Format of RTC sent to the EC.
- * @command: Always EC_COMMAND_CMOS
- * @reserved: Unused byte
- * @param: Always EC_CMOS_TOD_WRITE
+ * struct ec_rtc_write - Format of RTC sent to the EC.
+ * @param: EC_CMOS_TOD_WRITE
  * @century: Century value (full year / 100)
  * @year: Year value (full year % 100)
  * @month: Month value (1..12)
@@ -72,9 +57,7 @@ struct ec_rtc_read_response {
  *
  * All values are presented in BCD.
  */
-struct ec_rtc_write_request {
-	u8 command;
-	u8 reserved;
+struct ec_rtc_write {
 	u8 param;
 	u8 century;
 	u8 year;
@@ -89,16 +72,18 @@ struct ec_rtc_write_request {
 static int wilco_ec_rtc_read(struct device *dev, struct rtc_time *tm)
 {
 	struct wilco_ec_device *ec = dev_get_drvdata(dev->parent);
-	struct ec_rtc_read_response rtc;
-	struct wilco_ec_message msg;
+	u8 param = EC_CMOS_TOD_READ;
+	struct ec_rtc_read rtc;
+	struct wilco_ec_message msg = {
+		.type = WILCO_EC_MSG_LEGACY,
+		.flags = WILCO_EC_FLAG_RAW_RESPONSE,
+		.command = EC_COMMAND_CMOS,
+		.request_data = &param,
+		.request_size = sizeof(param),
+		.response_data = &rtc,
+		.response_size = sizeof(rtc),
+	};
 	int ret;
-
-	memset(&msg, 0, sizeof(msg));
-	msg.type = WILCO_EC_MSG_LEGACY;
-	msg.request_data = &read_rq;
-	msg.request_size = sizeof(read_rq);
-	msg.response_data = &rtc;
-	msg.response_size = sizeof(rtc);
 
 	ret = wilco_ec_mailbox(ec, &msg);
 	if (ret < 0)
@@ -121,8 +106,14 @@ static int wilco_ec_rtc_read(struct device *dev, struct rtc_time *tm)
 static int wilco_ec_rtc_write(struct device *dev, struct rtc_time *tm)
 {
 	struct wilco_ec_device *ec = dev_get_drvdata(dev->parent);
-	struct ec_rtc_write_request rtc;
-	struct wilco_ec_message msg;
+	struct ec_rtc_write rtc;
+	struct wilco_ec_message msg = {
+		.type = WILCO_EC_MSG_LEGACY,
+		.flags = WILCO_EC_FLAG_RAW_RESPONSE,
+		.command = EC_COMMAND_CMOS,
+		.request_data = &rtc,
+		.request_size = sizeof(rtc),
+	};
 	int year = tm->tm_year + 1900;
 	/*
 	 * Convert from 0=Sunday to 0=Saturday for the EC
@@ -132,7 +123,6 @@ static int wilco_ec_rtc_write(struct device *dev, struct rtc_time *tm)
 	int wday = tm->tm_wday == 6 ? 0 : tm->tm_wday + 1;
 	int ret;
 
-	rtc.command	= EC_COMMAND_CMOS;
 	rtc.param	= EC_CMOS_TOD_WRITE;
 	rtc.century	= bin2bcd(year / 100);
 	rtc.year	= bin2bcd(year % 100);
@@ -142,11 +132,6 @@ static int wilco_ec_rtc_write(struct device *dev, struct rtc_time *tm)
 	rtc.minute	= bin2bcd(tm->tm_min);
 	rtc.second	= bin2bcd(tm->tm_sec);
 	rtc.weekday	= bin2bcd(wday);
-
-	memset(&msg, 0, sizeof(msg));
-	msg.type = WILCO_EC_MSG_LEGACY;
-	msg.request_data = &rtc;
-	msg.request_size = sizeof(rtc);
 
 	ret = wilco_ec_mailbox(ec, &msg);
 	if (ret < 0)

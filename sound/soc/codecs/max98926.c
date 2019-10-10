@@ -1,7 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * max98926.c -- ALSA SoC MAX98926 driver
  * Copyright 2013-15 Maxim Integrated Products
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 #include <linux/delay.h>
 #include <linux/i2c.h>

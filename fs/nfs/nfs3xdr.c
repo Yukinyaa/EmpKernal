@@ -104,20 +104,6 @@ static const umode_t nfs_type2fmt[] = {
 	[NF3FIFO] = S_IFIFO,
 };
 
-static struct user_namespace *rpc_userns(const struct rpc_clnt *clnt)
-{
-	if (clnt && clnt->cl_cred)
-		return clnt->cl_cred->user_ns;
-	return &init_user_ns;
-}
-
-static struct user_namespace *rpc_rqst_userns(const struct rpc_rqst *rqstp)
-{
-	if (rqstp->rq_task)
-		return rpc_userns(rqstp->rq_task->tk_client);
-	return &init_user_ns;
-}
-
 /*
  * Encode/decode NFSv3 basic data types
  *
@@ -343,7 +329,7 @@ static int decode_nfsstat3(struct xdr_stream *xdr, enum nfs_stat *status)
 	return 0;
 out_status:
 	*status = be32_to_cpup(p);
-	trace_nfs_xdr_status(xdr, (int)*status);
+	trace_nfs_xdr_status((int)*status);
 	return 0;
 }
 
@@ -530,8 +516,7 @@ static __be32 *xdr_decode_nfstime3(__be32 *p, struct timespec *timep)
  *		set_mtime	mtime;
  *	};
  */
-static void encode_sattr3(struct xdr_stream *xdr, const struct iattr *attr,
-		struct user_namespace *userns)
+static void encode_sattr3(struct xdr_stream *xdr, const struct iattr *attr)
 {
 	struct timespec ts;
 	u32 nbytes;
@@ -566,13 +551,13 @@ static void encode_sattr3(struct xdr_stream *xdr, const struct iattr *attr,
 
 	if (attr->ia_valid & ATTR_UID) {
 		*p++ = xdr_one;
-		*p++ = cpu_to_be32(from_kuid_munged(userns, attr->ia_uid));
+		*p++ = cpu_to_be32(from_kuid(&init_user_ns, attr->ia_uid));
 	} else
 		*p++ = xdr_zero;
 
 	if (attr->ia_valid & ATTR_GID) {
 		*p++ = xdr_one;
-		*p++ = cpu_to_be32(from_kgid_munged(userns, attr->ia_gid));
+		*p++ = cpu_to_be32(from_kgid(&init_user_ns, attr->ia_gid));
 	} else
 		*p++ = xdr_zero;
 
@@ -621,8 +606,7 @@ static void encode_sattr3(struct xdr_stream *xdr, const struct iattr *attr,
  *		nfstime3	ctime;
  *	};
  */
-static int decode_fattr3(struct xdr_stream *xdr, struct nfs_fattr *fattr,
-		struct user_namespace *userns)
+static int decode_fattr3(struct xdr_stream *xdr, struct nfs_fattr *fattr)
 {
 	umode_t fmode;
 	__be32 *p;
@@ -635,10 +619,10 @@ static int decode_fattr3(struct xdr_stream *xdr, struct nfs_fattr *fattr,
 
 	fattr->mode = (be32_to_cpup(p++) & ~S_IFMT) | fmode;
 	fattr->nlink = be32_to_cpup(p++);
-	fattr->uid = make_kuid(userns, be32_to_cpup(p++));
+	fattr->uid = make_kuid(&init_user_ns, be32_to_cpup(p++));
 	if (!uid_valid(fattr->uid))
 		goto out_uid;
-	fattr->gid = make_kgid(userns, be32_to_cpup(p++));
+	fattr->gid = make_kgid(&init_user_ns, be32_to_cpup(p++));
 	if (!gid_valid(fattr->gid))
 		goto out_gid;
 
@@ -675,8 +659,7 @@ out_gid:
  *		void;
  *	};
  */
-static int decode_post_op_attr(struct xdr_stream *xdr, struct nfs_fattr *fattr,
-		struct user_namespace *userns)
+static int decode_post_op_attr(struct xdr_stream *xdr, struct nfs_fattr *fattr)
 {
 	__be32 *p;
 
@@ -684,7 +667,7 @@ static int decode_post_op_attr(struct xdr_stream *xdr, struct nfs_fattr *fattr,
 	if (unlikely(!p))
 		return -EIO;
 	if (*p != xdr_zero)
-		return decode_fattr3(xdr, fattr, userns);
+		return decode_fattr3(xdr, fattr);
 	return 0;
 }
 
@@ -745,15 +728,14 @@ static int decode_pre_op_attr(struct xdr_stream *xdr, struct nfs_fattr *fattr)
 	return 0;
 }
 
-static int decode_wcc_data(struct xdr_stream *xdr, struct nfs_fattr *fattr,
-		struct user_namespace *userns)
+static int decode_wcc_data(struct xdr_stream *xdr, struct nfs_fattr *fattr)
 {
 	int error;
 
 	error = decode_pre_op_attr(xdr, fattr);
 	if (unlikely(error))
 		goto out;
-	error = decode_post_op_attr(xdr, fattr, userns);
+	error = decode_post_op_attr(xdr, fattr);
 out:
 	return error;
 }
@@ -855,7 +837,7 @@ static void nfs3_xdr_enc_setattr3args(struct rpc_rqst *req,
 {
 	const struct nfs3_sattrargs *args = data;
 	encode_nfs_fh3(xdr, args->fh);
-	encode_sattr3(xdr, args->sattr, rpc_rqst_userns(req));
+	encode_sattr3(xdr, args->sattr);
 	encode_sattrguard3(xdr, args);
 }
 
@@ -1016,14 +998,13 @@ static void nfs3_xdr_enc_write3args(struct rpc_rqst *req,
  *	};
  */
 static void encode_createhow3(struct xdr_stream *xdr,
-			      const struct nfs3_createargs *args,
-			      struct user_namespace *userns)
+			      const struct nfs3_createargs *args)
 {
 	encode_uint32(xdr, args->createmode);
 	switch (args->createmode) {
 	case NFS3_CREATE_UNCHECKED:
 	case NFS3_CREATE_GUARDED:
-		encode_sattr3(xdr, args->sattr, userns);
+		encode_sattr3(xdr, args->sattr);
 		break;
 	case NFS3_CREATE_EXCLUSIVE:
 		encode_createverf3(xdr, args->verifier);
@@ -1040,7 +1021,7 @@ static void nfs3_xdr_enc_create3args(struct rpc_rqst *req,
 	const struct nfs3_createargs *args = data;
 
 	encode_diropargs3(xdr, args->fh, args->name, args->len);
-	encode_createhow3(xdr, args, rpc_rqst_userns(req));
+	encode_createhow3(xdr, args);
 }
 
 /*
@@ -1058,7 +1039,7 @@ static void nfs3_xdr_enc_mkdir3args(struct rpc_rqst *req,
 	const struct nfs3_mkdirargs *args = data;
 
 	encode_diropargs3(xdr, args->fh, args->name, args->len);
-	encode_sattr3(xdr, args->sattr, rpc_rqst_userns(req));
+	encode_sattr3(xdr, args->sattr);
 }
 
 /*
@@ -1075,12 +1056,11 @@ static void nfs3_xdr_enc_mkdir3args(struct rpc_rqst *req,
  *	};
  */
 static void encode_symlinkdata3(struct xdr_stream *xdr,
-				const void *data,
-				struct user_namespace *userns)
+				const void *data)
 {
 	const struct nfs3_symlinkargs *args = data;
 
-	encode_sattr3(xdr, args->sattr, userns);
+	encode_sattr3(xdr, args->sattr);
 	encode_nfspath3(xdr, args->pages, args->pathlen);
 }
 
@@ -1091,7 +1071,7 @@ static void nfs3_xdr_enc_symlink3args(struct rpc_rqst *req,
 	const struct nfs3_symlinkargs *args = data;
 
 	encode_diropargs3(xdr, args->fromfh, args->fromname, args->fromlen);
-	encode_symlinkdata3(xdr, args, rpc_rqst_userns(req));
+	encode_symlinkdata3(xdr, args);
 	xdr->buf->flags |= XDRBUF_WRITE;
 }
 
@@ -1120,26 +1100,24 @@ static void nfs3_xdr_enc_symlink3args(struct rpc_rqst *req,
  *	};
  */
 static void encode_devicedata3(struct xdr_stream *xdr,
-			       const struct nfs3_mknodargs *args,
-			       struct user_namespace *userns)
+			       const struct nfs3_mknodargs *args)
 {
-	encode_sattr3(xdr, args->sattr, userns);
+	encode_sattr3(xdr, args->sattr);
 	encode_specdata3(xdr, args->rdev);
 }
 
 static void encode_mknoddata3(struct xdr_stream *xdr,
-			      const struct nfs3_mknodargs *args,
-			      struct user_namespace *userns)
+			      const struct nfs3_mknodargs *args)
 {
 	encode_ftype3(xdr, args->type);
 	switch (args->type) {
 	case NF3CHR:
 	case NF3BLK:
-		encode_devicedata3(xdr, args, userns);
+		encode_devicedata3(xdr, args);
 		break;
 	case NF3SOCK:
 	case NF3FIFO:
-		encode_sattr3(xdr, args->sattr, userns);
+		encode_sattr3(xdr, args->sattr);
 		break;
 	case NF3REG:
 	case NF3DIR:
@@ -1156,7 +1134,7 @@ static void nfs3_xdr_enc_mknod3args(struct rpc_rqst *req,
 	const struct nfs3_mknodargs *args = data;
 
 	encode_diropargs3(xdr, args->fh, args->name, args->len);
-	encode_mknoddata3(xdr, args, rpc_rqst_userns(req));
+	encode_mknoddata3(xdr, args);
 }
 
 /*
@@ -1401,7 +1379,7 @@ static int nfs3_xdr_dec_getattr3res(struct rpc_rqst *req,
 		goto out;
 	if (status != NFS3_OK)
 		goto out_default;
-	error = decode_fattr3(xdr, result, rpc_rqst_userns(req));
+	error = decode_fattr3(xdr, result);
 out:
 	return error;
 out_default:
@@ -1436,7 +1414,7 @@ static int nfs3_xdr_dec_setattr3res(struct rpc_rqst *req,
 	error = decode_nfsstat3(xdr, &status);
 	if (unlikely(error))
 		goto out;
-	error = decode_wcc_data(xdr, result, rpc_rqst_userns(req));
+	error = decode_wcc_data(xdr, result);
 	if (unlikely(error))
 		goto out;
 	if (status != NFS3_OK)
@@ -1471,7 +1449,6 @@ static int nfs3_xdr_dec_lookup3res(struct rpc_rqst *req,
 				   struct xdr_stream *xdr,
 				   void *data)
 {
-	struct user_namespace *userns = rpc_rqst_userns(req);
 	struct nfs3_diropres *result = data;
 	enum nfs_stat status;
 	int error;
@@ -1484,14 +1461,14 @@ static int nfs3_xdr_dec_lookup3res(struct rpc_rqst *req,
 	error = decode_nfs_fh3(xdr, result->fh);
 	if (unlikely(error))
 		goto out;
-	error = decode_post_op_attr(xdr, result->fattr, userns);
+	error = decode_post_op_attr(xdr, result->fattr);
 	if (unlikely(error))
 		goto out;
-	error = decode_post_op_attr(xdr, result->dir_attr, userns);
+	error = decode_post_op_attr(xdr, result->dir_attr);
 out:
 	return error;
 out_default:
-	error = decode_post_op_attr(xdr, result->dir_attr, userns);
+	error = decode_post_op_attr(xdr, result->dir_attr);
 	if (unlikely(error))
 		goto out;
 	return nfs3_stat_to_errno(status);
@@ -1527,7 +1504,7 @@ static int nfs3_xdr_dec_access3res(struct rpc_rqst *req,
 	error = decode_nfsstat3(xdr, &status);
 	if (unlikely(error))
 		goto out;
-	error = decode_post_op_attr(xdr, result->fattr, rpc_rqst_userns(req));
+	error = decode_post_op_attr(xdr, result->fattr);
 	if (unlikely(error))
 		goto out;
 	if (status != NFS3_OK)
@@ -1568,7 +1545,7 @@ static int nfs3_xdr_dec_readlink3res(struct rpc_rqst *req,
 	error = decode_nfsstat3(xdr, &status);
 	if (unlikely(error))
 		goto out;
-	error = decode_post_op_attr(xdr, result, rpc_rqst_userns(req));
+	error = decode_post_op_attr(xdr, result);
 	if (unlikely(error))
 		goto out;
 	if (status != NFS3_OK)
@@ -1646,7 +1623,7 @@ static int nfs3_xdr_dec_read3res(struct rpc_rqst *req, struct xdr_stream *xdr,
 	error = decode_nfsstat3(xdr, &status);
 	if (unlikely(error))
 		goto out;
-	error = decode_post_op_attr(xdr, result->fattr, rpc_rqst_userns(req));
+	error = decode_post_op_attr(xdr, result->fattr);
 	if (unlikely(error))
 		goto out;
 	result->op_status = status;
@@ -1717,7 +1694,7 @@ static int nfs3_xdr_dec_write3res(struct rpc_rqst *req, struct xdr_stream *xdr,
 	error = decode_nfsstat3(xdr, &status);
 	if (unlikely(error))
 		goto out;
-	error = decode_wcc_data(xdr, result->fattr, rpc_rqst_userns(req));
+	error = decode_wcc_data(xdr, result->fattr);
 	if (unlikely(error))
 		goto out;
 	result->op_status = status;
@@ -1751,15 +1728,14 @@ out_status:
  *	};
  */
 static int decode_create3resok(struct xdr_stream *xdr,
-			       struct nfs3_diropres *result,
-			       struct user_namespace *userns)
+			       struct nfs3_diropres *result)
 {
 	int error;
 
 	error = decode_post_op_fh3(xdr, result->fh);
 	if (unlikely(error))
 		goto out;
-	error = decode_post_op_attr(xdr, result->fattr, userns);
+	error = decode_post_op_attr(xdr, result->fattr);
 	if (unlikely(error))
 		goto out;
 	/* The server isn't required to return a file handle.
@@ -1768,7 +1744,7 @@ static int decode_create3resok(struct xdr_stream *xdr,
 	 * values for the new object. */
 	if (result->fh->size == 0)
 		result->fattr->valid = 0;
-	error = decode_wcc_data(xdr, result->dir_attr, userns);
+	error = decode_wcc_data(xdr, result->dir_attr);
 out:
 	return error;
 }
@@ -1777,7 +1753,6 @@ static int nfs3_xdr_dec_create3res(struct rpc_rqst *req,
 				   struct xdr_stream *xdr,
 				   void *data)
 {
-	struct user_namespace *userns = rpc_rqst_userns(req);
 	struct nfs3_diropres *result = data;
 	enum nfs_stat status;
 	int error;
@@ -1787,11 +1762,11 @@ static int nfs3_xdr_dec_create3res(struct rpc_rqst *req,
 		goto out;
 	if (status != NFS3_OK)
 		goto out_default;
-	error = decode_create3resok(xdr, result, userns);
+	error = decode_create3resok(xdr, result);
 out:
 	return error;
 out_default:
-	error = decode_wcc_data(xdr, result->dir_attr, userns);
+	error = decode_wcc_data(xdr, result->dir_attr);
 	if (unlikely(error))
 		goto out;
 	return nfs3_stat_to_errno(status);
@@ -1826,7 +1801,7 @@ static int nfs3_xdr_dec_remove3res(struct rpc_rqst *req,
 	error = decode_nfsstat3(xdr, &status);
 	if (unlikely(error))
 		goto out;
-	error = decode_wcc_data(xdr, result->dir_attr, rpc_rqst_userns(req));
+	error = decode_wcc_data(xdr, result->dir_attr);
 	if (unlikely(error))
 		goto out;
 	if (status != NFS3_OK)
@@ -1861,7 +1836,6 @@ static int nfs3_xdr_dec_rename3res(struct rpc_rqst *req,
 				   struct xdr_stream *xdr,
 				   void *data)
 {
-	struct user_namespace *userns = rpc_rqst_userns(req);
 	struct nfs_renameres *result = data;
 	enum nfs_stat status;
 	int error;
@@ -1869,10 +1843,10 @@ static int nfs3_xdr_dec_rename3res(struct rpc_rqst *req,
 	error = decode_nfsstat3(xdr, &status);
 	if (unlikely(error))
 		goto out;
-	error = decode_wcc_data(xdr, result->old_fattr, userns);
+	error = decode_wcc_data(xdr, result->old_fattr);
 	if (unlikely(error))
 		goto out;
-	error = decode_wcc_data(xdr, result->new_fattr, userns);
+	error = decode_wcc_data(xdr, result->new_fattr);
 	if (unlikely(error))
 		goto out;
 	if (status != NFS3_OK)
@@ -1906,7 +1880,6 @@ out_status:
 static int nfs3_xdr_dec_link3res(struct rpc_rqst *req, struct xdr_stream *xdr,
 				 void *data)
 {
-	struct user_namespace *userns = rpc_rqst_userns(req);
 	struct nfs3_linkres *result = data;
 	enum nfs_stat status;
 	int error;
@@ -1914,10 +1887,10 @@ static int nfs3_xdr_dec_link3res(struct rpc_rqst *req, struct xdr_stream *xdr,
 	error = decode_nfsstat3(xdr, &status);
 	if (unlikely(error))
 		goto out;
-	error = decode_post_op_attr(xdr, result->fattr, userns);
+	error = decode_post_op_attr(xdr, result->fattr);
 	if (unlikely(error))
 		goto out;
-	error = decode_wcc_data(xdr, result->dir_attr, userns);
+	error = decode_wcc_data(xdr, result->dir_attr);
 	if (unlikely(error))
 		goto out;
 	if (status != NFS3_OK)
@@ -1966,7 +1939,6 @@ out_status:
 int nfs3_decode_dirent(struct xdr_stream *xdr, struct nfs_entry *entry,
 		       bool plus)
 {
-	struct user_namespace *userns = rpc_userns(entry->server->client);
 	struct nfs_entry old = *entry;
 	__be32 *p;
 	int error;
@@ -2001,7 +1973,7 @@ int nfs3_decode_dirent(struct xdr_stream *xdr, struct nfs_entry *entry,
 
 	if (plus) {
 		entry->fattr->valid = 0;
-		error = decode_post_op_attr(xdr, entry->fattr, userns);
+		error = decode_post_op_attr(xdr, entry->fattr);
 		if (unlikely(error))
 			return error;
 		if (entry->fattr->valid & NFS_ATTR_FATTR_V3)
@@ -2073,12 +2045,11 @@ static int decode_dirlist3(struct xdr_stream *xdr)
 }
 
 static int decode_readdir3resok(struct xdr_stream *xdr,
-				struct nfs3_readdirres *result,
-				struct user_namespace *userns)
+				struct nfs3_readdirres *result)
 {
 	int error;
 
-	error = decode_post_op_attr(xdr, result->dir_attr, userns);
+	error = decode_post_op_attr(xdr, result->dir_attr);
 	if (unlikely(error))
 		goto out;
 	/* XXX: do we need to check if result->verf != NULL ? */
@@ -2103,11 +2074,11 @@ static int nfs3_xdr_dec_readdir3res(struct rpc_rqst *req,
 		goto out;
 	if (status != NFS3_OK)
 		goto out_default;
-	error = decode_readdir3resok(xdr, result, rpc_rqst_userns(req));
+	error = decode_readdir3resok(xdr, result);
 out:
 	return error;
 out_default:
-	error = decode_post_op_attr(xdr, result->dir_attr, rpc_rqst_userns(req));
+	error = decode_post_op_attr(xdr, result->dir_attr);
 	if (unlikely(error))
 		goto out;
 	return nfs3_stat_to_errno(status);
@@ -2167,7 +2138,7 @@ static int nfs3_xdr_dec_fsstat3res(struct rpc_rqst *req,
 	error = decode_nfsstat3(xdr, &status);
 	if (unlikely(error))
 		goto out;
-	error = decode_post_op_attr(xdr, result->fattr, rpc_rqst_userns(req));
+	error = decode_post_op_attr(xdr, result->fattr);
 	if (unlikely(error))
 		goto out;
 	if (status != NFS3_OK)
@@ -2241,7 +2212,7 @@ static int nfs3_xdr_dec_fsinfo3res(struct rpc_rqst *req,
 	error = decode_nfsstat3(xdr, &status);
 	if (unlikely(error))
 		goto out;
-	error = decode_post_op_attr(xdr, result->fattr, rpc_rqst_userns(req));
+	error = decode_post_op_attr(xdr, result->fattr);
 	if (unlikely(error))
 		goto out;
 	if (status != NFS3_OK)
@@ -2302,7 +2273,7 @@ static int nfs3_xdr_dec_pathconf3res(struct rpc_rqst *req,
 	error = decode_nfsstat3(xdr, &status);
 	if (unlikely(error))
 		goto out;
-	error = decode_post_op_attr(xdr, result->fattr, rpc_rqst_userns(req));
+	error = decode_post_op_attr(xdr, result->fattr);
 	if (unlikely(error))
 		goto out;
 	if (status != NFS3_OK)
@@ -2344,7 +2315,7 @@ static int nfs3_xdr_dec_commit3res(struct rpc_rqst *req,
 	error = decode_nfsstat3(xdr, &status);
 	if (unlikely(error))
 		goto out;
-	error = decode_wcc_data(xdr, result->fattr, rpc_rqst_userns(req));
+	error = decode_wcc_data(xdr, result->fattr);
 	if (unlikely(error))
 		goto out;
 	result->op_status = status;
@@ -2360,15 +2331,14 @@ out_status:
 #ifdef CONFIG_NFS_V3_ACL
 
 static inline int decode_getacl3resok(struct xdr_stream *xdr,
-				      struct nfs3_getaclres *result,
-				      struct user_namespace *userns)
+				      struct nfs3_getaclres *result)
 {
 	struct posix_acl **acl;
 	unsigned int *aclcnt;
 	size_t hdrlen;
 	int error;
 
-	error = decode_post_op_attr(xdr, result->fattr, userns);
+	error = decode_post_op_attr(xdr, result->fattr);
 	if (unlikely(error))
 		goto out;
 	error = decode_uint32(xdr, &result->mask);
@@ -2416,7 +2386,7 @@ static int nfs3_xdr_dec_getacl3res(struct rpc_rqst *req,
 		goto out;
 	if (status != NFS3_OK)
 		goto out_default;
-	error = decode_getacl3resok(xdr, result, rpc_rqst_userns(req));
+	error = decode_getacl3resok(xdr, result);
 out:
 	return error;
 out_default:
@@ -2435,7 +2405,7 @@ static int nfs3_xdr_dec_setacl3res(struct rpc_rqst *req,
 		goto out;
 	if (status != NFS3_OK)
 		goto out_default;
-	error = decode_post_op_attr(xdr, result, rpc_rqst_userns(req));
+	error = decode_post_op_attr(xdr, result);
 out:
 	return error;
 out_default:

@@ -29,12 +29,9 @@
 #include <linux/export.h>
 #include <linux/dma-buf.h>
 #include <linux/rbtree.h>
-
-#include <drm/drm_drv.h>
-#include <drm/drm_file.h>
-#include <drm/drm_framebuffer.h>
-#include <drm/drm_gem.h>
 #include <drm/drm_prime.h>
+#include <drm/drm_gem.h>
+#include <drm/drmP.h>
 
 #include "drm_internal.h"
 
@@ -87,6 +84,11 @@ struct drm_prime_member {
 
 	struct rb_node dmabuf_rb;
 	struct rb_node handle_rb;
+};
+
+struct drm_prime_attachment {
+	struct sg_table *sgt;
+	enum dma_data_direction dir;
 };
 
 static int drm_prime_add_buf_handle(struct drm_prime_file_private *prime_fpriv,
@@ -186,15 +188,24 @@ static int drm_prime_lookup_buf_handle(struct drm_prime_file_private *prime_fpri
  * @dma_buf: buffer to attach device to
  * @attach: buffer attachment data
  *
- * Calls &drm_driver.gem_prime_pin for device specific handling. This can be
- * used as the &dma_buf_ops.attach callback.
+ * Allocates &drm_prime_attachment and calls &drm_driver.gem_prime_pin for
+ * device specific attachment. This can be used as the &dma_buf_ops.attach
+ * callback.
  *
  * Returns 0 on success, negative error code on failure.
  */
 int drm_gem_map_attach(struct dma_buf *dma_buf,
 		       struct dma_buf_attachment *attach)
 {
+	struct drm_prime_attachment *prime_attach;
 	struct drm_gem_object *obj = dma_buf->priv;
+
+	prime_attach = kzalloc(sizeof(*prime_attach), GFP_KERNEL);
+	if (!prime_attach)
+		return -ENOMEM;
+
+	prime_attach->dir = DMA_NONE;
+	attach->priv = prime_attach;
 
 	return drm_gem_pin(obj);
 }
@@ -211,7 +222,25 @@ EXPORT_SYMBOL(drm_gem_map_attach);
 void drm_gem_map_detach(struct dma_buf *dma_buf,
 			struct dma_buf_attachment *attach)
 {
+	struct drm_prime_attachment *prime_attach = attach->priv;
 	struct drm_gem_object *obj = dma_buf->priv;
+
+	if (prime_attach) {
+		struct sg_table *sgt = prime_attach->sgt;
+
+		if (sgt) {
+			if (prime_attach->dir != DMA_NONE)
+				dma_unmap_sg_attrs(attach->dev, sgt->sgl,
+						   sgt->nents,
+						   prime_attach->dir,
+						   DMA_ATTR_SKIP_CPU_SYNC);
+			sg_free_table(sgt);
+		}
+
+		kfree(sgt);
+		kfree(prime_attach);
+		attach->priv = NULL;
+	}
 
 	drm_gem_unpin(obj);
 }
@@ -257,22 +286,39 @@ void drm_prime_remove_buf_handle_locked(struct drm_prime_file_private *prime_fpr
 struct sg_table *drm_gem_map_dma_buf(struct dma_buf_attachment *attach,
 				     enum dma_data_direction dir)
 {
+	struct drm_prime_attachment *prime_attach = attach->priv;
 	struct drm_gem_object *obj = attach->dmabuf->priv;
 	struct sg_table *sgt;
 
-	if (WARN_ON(dir == DMA_NONE))
+	if (WARN_ON(dir == DMA_NONE || !prime_attach))
 		return ERR_PTR(-EINVAL);
+
+	/* return the cached mapping when possible */
+	if (prime_attach->dir == dir)
+		return prime_attach->sgt;
+
+	/*
+	 * two mappings with different directions for the same attachment are
+	 * not allowed
+	 */
+	if (WARN_ON(prime_attach->dir != DMA_NONE))
+		return ERR_PTR(-EBUSY);
 
 	if (obj->funcs)
 		sgt = obj->funcs->get_sg_table(obj);
 	else
 		sgt = obj->dev->driver->gem_prime_get_sg_table(obj);
 
-	if (!dma_map_sg_attrs(attach->dev, sgt->sgl, sgt->nents, dir,
-			      DMA_ATTR_SKIP_CPU_SYNC)) {
-		sg_free_table(sgt);
-		kfree(sgt);
-		sgt = ERR_PTR(-ENOMEM);
+	if (!IS_ERR(sgt)) {
+		if (!dma_map_sg_attrs(attach->dev, sgt->sgl, sgt->nents, dir,
+				      DMA_ATTR_SKIP_CPU_SYNC)) {
+			sg_free_table(sgt);
+			kfree(sgt);
+			sgt = ERR_PTR(-ENOMEM);
+		} else {
+			prime_attach->sgt = sgt;
+			prime_attach->dir = dir;
+		}
 	}
 
 	return sgt;
@@ -285,19 +331,14 @@ EXPORT_SYMBOL(drm_gem_map_dma_buf);
  * @sgt: scatterlist info of the buffer to unmap
  * @dir: direction of DMA transfer
  *
- * This can be used as the &dma_buf_ops.unmap_dma_buf callback.
+ * Not implemented. The unmap is done at drm_gem_map_detach().  This can be
+ * used as the &dma_buf_ops.unmap_dma_buf callback.
  */
 void drm_gem_unmap_dma_buf(struct dma_buf_attachment *attach,
 			   struct sg_table *sgt,
 			   enum dma_data_direction dir)
 {
-	if (!sgt)
-		return;
-
-	dma_unmap_sg_attrs(attach->dev, sgt->sgl, sgt->nents, dir,
-			   DMA_ATTR_SKIP_CPU_SYNC);
-	sg_free_table(sgt);
-	kfree(sgt);
+	/* nothing to be done here */
 }
 EXPORT_SYMBOL(drm_gem_unmap_dma_buf);
 
@@ -411,7 +452,6 @@ int drm_gem_dmabuf_mmap(struct dma_buf *dma_buf, struct vm_area_struct *vma)
 EXPORT_SYMBOL(drm_gem_dmabuf_mmap);
 
 static const struct dma_buf_ops drm_gem_prime_dmabuf_ops =  {
-	.cache_sgt_mapping = true,
 	.attach = drm_gem_map_attach,
 	.detach = drm_gem_map_detach,
 	.map_dma_buf = drm_gem_map_dma_buf,
@@ -464,7 +504,6 @@ struct dma_buf *drm_gem_prime_export(struct drm_device *dev,
 		.size = obj->size,
 		.flags = flags,
 		.priv = obj,
-		.resv = obj->resv,
 	};
 
 	if (dev->driver->gem_prime_res_obj)

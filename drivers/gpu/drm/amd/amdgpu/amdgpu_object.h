@@ -72,8 +72,6 @@ struct amdgpu_bo_va {
 
 	/* If the mappings are cleared or filled */
 	bool				cleared;
-
-	bool				is_xgmi;
 };
 
 struct amdgpu_bo {
@@ -155,7 +153,7 @@ static inline int amdgpu_bo_reserve(struct amdgpu_bo *bo, bool no_intr)
 	struct amdgpu_device *adev = amdgpu_ttm_adev(bo->tbo.bdev);
 	int r;
 
-	r = __ttm_bo_reserve(&bo->tbo, !no_intr, false, NULL);
+	r = ttm_bo_reserve(&bo->tbo, !no_intr, false, NULL);
 	if (unlikely(r != 0)) {
 		if (r != -ERESTARTSYS)
 			dev_err(adev->dev, "%p reserve failed\n", bo);

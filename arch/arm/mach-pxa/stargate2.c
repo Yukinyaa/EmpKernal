@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/arch/arm/mach-pxa/stargate2.c
  *
@@ -7,6 +6,10 @@
  *  Copyright:	Intel Corp.
  *
  *  Modified 2009:  Jonathan Cameron <jic23@cam.ac.uk>
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License version 2 as
+ *  published by the Free Software Foundation.
  */
 
 #include <linux/init.h>

@@ -1,12 +1,17 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * include/asm-xtensa/pgalloc.h
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  * Copyright (C) 2001-2007 Tensilica Inc.
  */
 
 #ifndef _XTENSA_PGALLOC_H
 #define _XTENSA_PGALLOC_H
+
+#ifdef __KERNEL__
 
 #include <linux/highmem.h>
 #include <linux/slab.h>
@@ -74,4 +79,5 @@ static inline void pte_free(struct mm_struct *mm, pgtable_t pte)
 }
 #define pmd_pgtable(pmd) pmd_page(pmd)
 
+#endif /* __KERNEL__ */
 #endif /* _XTENSA_PGALLOC_H */

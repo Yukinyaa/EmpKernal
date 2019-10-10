@@ -365,10 +365,14 @@ nouveau_fbcon_create(struct drm_fb_helper *helper,
 		ret = PTR_ERR(info);
 		goto out_unlock;
 	}
+	info->skip_vt_switch = 1;
+
+	info->par = fbcon;
 
 	/* setup helper */
 	fbcon->helper.fb = &fb->base;
 
+	strcpy(info->fix.id, "nouveaufb");
 	if (!chan)
 		info->flags = FBINFO_HWACCEL_DISABLED;
 	else
@@ -383,7 +387,9 @@ nouveau_fbcon_create(struct drm_fb_helper *helper,
 	info->screen_base = nvbo_kmap_obj_iovirtual(fb->nvbo);
 	info->screen_size = fb->nvbo->bo.mem.num_pages << PAGE_SHIFT;
 
-	drm_fb_helper_fill_info(info, &fbcon->helper, sizes);
+	drm_fb_helper_fill_fix(info, fb->base.pitches[0],
+			       fb->base.format->depth);
+	drm_fb_helper_fill_var(info, &fbcon->helper, sizes->fb_width, sizes->fb_height);
 
 	/* Use default scratch pixmap (info->pixmap.flags = FB_PIXMAP_SYSTEM) */
 

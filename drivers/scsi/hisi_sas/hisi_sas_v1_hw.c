@@ -1,7 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (c) 2015 Linaro Ltd.
  * Copyright (c) 2015 Hisilicon Limited.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
  */
 
 #include "hisi_sas.h"
@@ -793,11 +798,16 @@ static void start_phy_v1_hw(struct hisi_hba *hisi_hba, int phy_no)
 	enable_phy_v1_hw(hisi_hba, phy_no);
 }
 
+static void stop_phy_v1_hw(struct hisi_hba *hisi_hba, int phy_no)
+{
+	disable_phy_v1_hw(hisi_hba, phy_no);
+}
+
 static void phy_hard_reset_v1_hw(struct hisi_hba *hisi_hba, int phy_no)
 {
-	hisi_sas_phy_enable(hisi_hba, phy_no, 0);
+	stop_phy_v1_hw(hisi_hba, phy_no);
 	msleep(100);
-	hisi_sas_phy_enable(hisi_hba, phy_no, 1);
+	start_phy_v1_hw(hisi_hba, phy_no);
 }
 
 static void start_phys_v1_hw(struct timer_list *t)
@@ -807,7 +817,7 @@ static void start_phys_v1_hw(struct timer_list *t)
 
 	for (i = 0; i < hisi_hba->n_phy; i++) {
 		hisi_sas_phy_write32(hisi_hba, i, CHL_INT2_MSK, 0x12a);
-		hisi_sas_phy_enable(hisi_hba, i, 1);
+		start_phy_v1_hw(hisi_hba, i);
 	}
 }
 
@@ -1685,7 +1695,8 @@ static int interrupt_init_v1_hw(struct hisi_hba *hisi_hba)
 		for (j = 0; j < HISI_SAS_PHY_INT_NR; j++, idx++) {
 			irq = platform_get_irq(pdev, idx);
 			if (!irq) {
-				dev_err(dev, "irq init: fail map phy interrupt %d\n",
+				dev_err(dev,
+					"irq init: fail map phy interrupt %d\n",
 					idx);
 				return -ENOENT;
 			}
@@ -1693,7 +1704,8 @@ static int interrupt_init_v1_hw(struct hisi_hba *hisi_hba)
 			rc = devm_request_irq(dev, irq, phy_interrupts[j], 0,
 					      DRV_NAME " phy", phy);
 			if (rc) {
-				dev_err(dev, "irq init: could not request phy interrupt %d, rc=%d\n",
+				dev_err(dev, "irq init: could not request "
+					"phy interrupt %d, rc=%d\n",
 					irq, rc);
 				return -ENOENT;
 			}
@@ -1730,7 +1742,8 @@ static int interrupt_init_v1_hw(struct hisi_hba *hisi_hba)
 		rc = devm_request_irq(dev, irq, fatal_interrupts[i], 0,
 				      DRV_NAME " fatal", hisi_hba);
 		if (rc) {
-			dev_err(dev, "irq init: could not request fatal interrupt %d, rc=%d\n",
+			dev_err(dev,
+				"irq init: could not request fatal interrupt %d, rc=%d\n",
 				irq, rc);
 			return -ENOENT;
 		}
@@ -1810,7 +1823,6 @@ static struct scsi_host_template sht_v1_hw = {
 	.target_destroy		= sas_target_destroy,
 	.ioctl			= sas_ioctl,
 	.shost_attrs		= host_attrs_v1_hw,
-	.host_reset             = hisi_sas_host_reset,
 };
 
 static const struct hisi_sas_hw hisi_sas_v1_hw = {

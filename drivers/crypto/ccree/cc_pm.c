@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2012-2019 ARM Limited (or its affiliates). */
+/* Copyright (C) 2012-2018 ARM Limited or its affiliates. */
 
 #include <linux/kernel.h>
 #include <linux/interrupt.h>
@@ -48,11 +48,6 @@ int cc_pm_resume(struct device *dev)
 	if (rc) {
 		dev_err(dev, "failed getting clock back on. We're toast.\n");
 		return rc;
-	}
-	/* wait for Crytpcell reset completion */
-	if (!cc_wait_for_reset_completion(drvdata)) {
-		dev_err(dev, "Cryptocell reset not completed");
-		return -EBUSY;
 	}
 
 	cc_iowrite(drvdata, CC_REG(HOST_POWER_DOWN_EN), POWER_DOWN_DISABLE);
@@ -104,12 +99,6 @@ int cc_pm_put_suspend(struct device *dev)
 		rc = -EBUSY;
 	}
 	return rc;
-}
-
-bool cc_pm_is_dev_suspended(struct device *dev)
-{
-	/* check device state using runtime api */
-	return pm_runtime_suspended(dev);
 }
 
 int cc_pm_init(struct cc_drvdata *drvdata)

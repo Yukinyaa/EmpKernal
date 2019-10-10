@@ -76,7 +76,6 @@ static const struct {
 		.scancode_bits = 0x00ffffff, .repeat_period = 114 },
 	[RC_PROTO_RCMM32] = { .name = "rc-mm-32",
 		.scancode_bits = 0xffffffff, .repeat_period = 114 },
-	[RC_PROTO_XBOX_DVD] = { .name = "xbox-dvd", .repeat_period = 64 },
 };
 
 /* Used to keep track of known keymaps */
@@ -1028,7 +1027,6 @@ static const struct {
 	{ RC_PROTO_BIT_RCMM12 |
 	  RC_PROTO_BIT_RCMM24 |
 	  RC_PROTO_BIT_RCMM32,	"rc-mm",	"ir-rcmm-decoder"	},
-	{ RC_PROTO_BIT_XBOX_DVD, "xbox-dvd",	NULL			},
 };
 
 /**
@@ -1502,7 +1500,7 @@ static ssize_t store_wakeup_protocols(struct device *device,
 				      const char *buf, size_t len)
 {
 	struct rc_dev *dev = to_rc_dev(device);
-	enum rc_proto protocol = RC_PROTO_UNKNOWN;
+	enum rc_proto protocol;
 	ssize_t rc;
 	u64 allowed;
 	int i;
@@ -1511,7 +1509,9 @@ static ssize_t store_wakeup_protocols(struct device *device,
 
 	allowed = dev->allowed_wakeup_protocols;
 
-	if (!sysfs_streq(buf, "none")) {
+	if (sysfs_streq(buf, "none")) {
+		protocol = RC_PROTO_UNKNOWN;
+	} else {
 		for (i = 0; i < ARRAY_SIZE(protocols); i++) {
 			if ((allowed & (1ULL << i)) &&
 			    sysfs_streq(buf, protocols[i].name)) {

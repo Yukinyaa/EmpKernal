@@ -72,6 +72,8 @@
  */
 const char ib_hfi1_version[] = HFI1_DRIVER_VERSION "\n";
 
+DEFINE_SPINLOCK(hfi1_devs_lock);
+LIST_HEAD(hfi1_dev_list);
 DEFINE_MUTEX(hfi1_mutex);	/* general driver use */
 
 unsigned int hfi1_max_mtu = HFI1_DEFAULT_MAX_MTU;
@@ -173,11 +175,11 @@ int hfi1_count_active_units(void)
 {
 	struct hfi1_devdata *dd;
 	struct hfi1_pportdata *ppd;
-	unsigned long index, flags;
+	unsigned long flags;
 	int pidx, nunits_active = 0;
 
-	xa_lock_irqsave(&hfi1_dev_table, flags);
-	xa_for_each(&hfi1_dev_table, index, dd) {
+	spin_lock_irqsave(&hfi1_devs_lock, flags);
+	list_for_each_entry(dd, &hfi1_dev_list, list) {
 		if (!(dd->flags & HFI1_PRESENT) || !dd->kregbase1)
 			continue;
 		for (pidx = 0; pidx < dd->num_pports; ++pidx) {
@@ -188,7 +190,7 @@ int hfi1_count_active_units(void)
 			}
 		}
 	}
-	xa_unlock_irqrestore(&hfi1_dev_table, flags);
+	spin_unlock_irqrestore(&hfi1_devs_lock, flags);
 	return nunits_active;
 }
 
@@ -262,7 +264,7 @@ static void rcv_hdrerr(struct hfi1_ctxtdata *rcd, struct hfi1_pportdata *ppd,
 	    hfi1_dbg_fault_suppress_err(verbs_dev))
 		return;
 
-	if (packet->rhf & RHF_ICRC_ERR)
+	if (packet->rhf & (RHF_VCRC_ERR | RHF_ICRC_ERR))
 		return;
 
 	if (packet->etype == RHF_RCV_TYPE_BYPASS) {
@@ -514,9 +516,7 @@ bool hfi1_process_ecn_slowpath(struct rvt_qp *qp, struct hfi1_packet *pkt,
 	 */
 	do_cnp = prescan ||
 		(opcode >= IB_OPCODE_RC_RDMA_READ_RESPONSE_FIRST &&
-		 opcode <= IB_OPCODE_RC_ATOMIC_ACKNOWLEDGE) ||
-		opcode == TID_OP(READ_RESP) ||
-		opcode == TID_OP(ACK);
+		 opcode <= IB_OPCODE_RC_ATOMIC_ACKNOWLEDGE);
 
 	/* Call appropriate CNP handler */
 	if (!ignore_fecn && do_cnp && fecn)
@@ -1581,7 +1581,7 @@ static void show_eflags_errs(struct hfi1_packet *packet)
 	u32 rte = rhf_rcv_type_err(packet->rhf);
 
 	dd_dev_err(rcd->dd,
-		   "receive context %d: rhf 0x%016llx, errs [ %s%s%s%s%s%s%s] rte 0x%x\n",
+		   "receive context %d: rhf 0x%016llx, errs [ %s%s%s%s%s%s%s%s] rte 0x%x\n",
 		   rcd->ctxt, packet->rhf,
 		   packet->rhf & RHF_K_HDR_LEN_ERR ? "k_hdr_len " : "",
 		   packet->rhf & RHF_DC_UNC_ERR ? "dc_unc " : "",
@@ -1589,6 +1589,7 @@ static void show_eflags_errs(struct hfi1_packet *packet)
 		   packet->rhf & RHF_TID_ERR ? "tid " : "",
 		   packet->rhf & RHF_LEN_ERR ? "len " : "",
 		   packet->rhf & RHF_ECC_ERR ? "ecc " : "",
+		   packet->rhf & RHF_VCRC_ERR ? "vcrc " : "",
 		   packet->rhf & RHF_ICRC_ERR ? "icrc " : "",
 		   rte);
 }

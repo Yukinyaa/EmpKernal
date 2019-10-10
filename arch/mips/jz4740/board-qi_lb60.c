@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * linux/arch/mips/jz4740/board-qi_lb60.c
  *
@@ -7,6 +6,10 @@
  * Copyright (c) 2009 Qi Hardware inc.,
  * Author: Xiangfu Liu <xiangfu@qi-hardware.com>
  * Copyright 2010, Lars-Peter Clausen <lars@metafoo.de>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 or later
+ * as published by the Free Software Foundation.
  */
 
 #include <linux/kernel.h>
@@ -36,6 +39,8 @@
 #include <linux/regulator/machine.h>
 
 #include <asm/mach-jz4740/platform.h>
+
+#include "clock.h"
 
 /* GPIOs */
 #define QI_LB60_GPIO_KEYOUT(x)		(JZ_GPIO_PORTC(10) + (x))
@@ -464,27 +469,27 @@ static unsigned long pin_cfg_bias_disable[] = {
 static struct pinctrl_map pin_map[] __initdata = {
 	/* NAND pin configuration */
 	PIN_MAP_MUX_GROUP_DEFAULT("jz4740-nand",
-			"10010000.pin-controller", "nand-cs1", "nand"),
+			"10010000.jz4740-pinctrl", "nand", "nand-cs1"),
 
 	/* fbdev pin configuration */
 	PIN_MAP_MUX_GROUP("jz4740-fb", PINCTRL_STATE_DEFAULT,
-			"10010000.pin-controller", "lcd-8bit", "lcd"),
+			"10010000.jz4740-pinctrl", "lcd", "lcd-8bit"),
 	PIN_MAP_MUX_GROUP("jz4740-fb", PINCTRL_STATE_SLEEP,
-			"10010000.pin-controller", "lcd-no-pins", "lcd"),
+			"10010000.jz4740-pinctrl", "lcd", "lcd-no-pins"),
 
 	/* MMC pin configuration */
 	PIN_MAP_MUX_GROUP_DEFAULT("jz4740-mmc.0",
-			"10010000.pin-controller", "mmc-1bit", "mmc"),
+			"10010000.jz4740-pinctrl", "mmc", "mmc-1bit"),
 	PIN_MAP_MUX_GROUP_DEFAULT("jz4740-mmc.0",
-			"10010000.pin-controller", "mmc-4bit", "mmc"),
+			"10010000.jz4740-pinctrl", "mmc", "mmc-4bit"),
 	PIN_MAP_CONFIGS_PIN_DEFAULT("jz4740-mmc.0",
-			"10010000.pin-controller", "PD0", pin_cfg_bias_disable),
+			"10010000.jz4740-pinctrl", "PD0", pin_cfg_bias_disable),
 	PIN_MAP_CONFIGS_PIN_DEFAULT("jz4740-mmc.0",
-			"10010000.pin-controller", "PD2", pin_cfg_bias_disable),
+			"10010000.jz4740-pinctrl", "PD2", pin_cfg_bias_disable),
 
 	/* PWM pin configuration */
 	PIN_MAP_MUX_GROUP_DEFAULT("jz4740-pwm",
-			"10010000.pin-controller", "pwm4", "pwm4"),
+			"10010000.jz4740-pinctrl", "pwm4", "pwm4"),
 };
 
 

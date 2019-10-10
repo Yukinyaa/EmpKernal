@@ -1,6 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2014 Arturo Borrero Gonzalez <arturo@debian.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/kernel.h>
@@ -11,7 +14,8 @@
 #include <linux/netfilter/nf_tables.h>
 #include <net/netfilter/nf_tables.h>
 #include <net/netfilter/nf_nat.h>
-#include <net/netfilter/nf_nat_masquerade.h>
+#include <net/netfilter/ipv4/nf_nat_masquerade.h>
+#include <net/netfilter/ipv6/nf_nat_masquerade.h>
 
 struct nft_masq {
 	u32			flags;
@@ -192,71 +196,26 @@ static struct nft_expr_type nft_masq_ipv6_type __read_mostly = {
 
 static int __init nft_masq_module_init_ipv6(void)
 {
-	return nft_register_expr(&nft_masq_ipv6_type);
+	int ret = nft_register_expr(&nft_masq_ipv6_type);
+
+	if (ret)
+		return ret;
+
+	ret = nf_nat_masquerade_ipv6_register_notifier();
+	if (ret < 0)
+		nft_unregister_expr(&nft_masq_ipv6_type);
+
+	return ret;
 }
 
 static void nft_masq_module_exit_ipv6(void)
 {
 	nft_unregister_expr(&nft_masq_ipv6_type);
+	nf_nat_masquerade_ipv6_unregister_notifier();
 }
 #else
 static inline int nft_masq_module_init_ipv6(void) { return 0; }
 static inline void nft_masq_module_exit_ipv6(void) {}
-#endif
-
-#ifdef CONFIG_NF_TABLES_INET
-static void nft_masq_inet_eval(const struct nft_expr *expr,
-			       struct nft_regs *regs,
-			       const struct nft_pktinfo *pkt)
-{
-	switch (nft_pf(pkt)) {
-	case NFPROTO_IPV4:
-		return nft_masq_ipv4_eval(expr, regs, pkt);
-	case NFPROTO_IPV6:
-		return nft_masq_ipv6_eval(expr, regs, pkt);
-	}
-
-	WARN_ON_ONCE(1);
-}
-
-static void
-nft_masq_inet_destroy(const struct nft_ctx *ctx, const struct nft_expr *expr)
-{
-	nf_ct_netns_put(ctx->net, NFPROTO_INET);
-}
-
-static struct nft_expr_type nft_masq_inet_type;
-static const struct nft_expr_ops nft_masq_inet_ops = {
-	.type		= &nft_masq_inet_type,
-	.size		= NFT_EXPR_SIZE(sizeof(struct nft_masq)),
-	.eval		= nft_masq_inet_eval,
-	.init		= nft_masq_init,
-	.destroy	= nft_masq_inet_destroy,
-	.dump		= nft_masq_dump,
-	.validate	= nft_masq_validate,
-};
-
-static struct nft_expr_type nft_masq_inet_type __read_mostly = {
-	.family		= NFPROTO_INET,
-	.name		= "masq",
-	.ops		= &nft_masq_inet_ops,
-	.policy		= nft_masq_policy,
-	.maxattr	= NFTA_MASQ_MAX,
-	.owner		= THIS_MODULE,
-};
-
-static int __init nft_masq_module_init_inet(void)
-{
-	return nft_register_expr(&nft_masq_inet_type);
-}
-
-static void nft_masq_module_exit_inet(void)
-{
-	nft_unregister_expr(&nft_masq_inet_type);
-}
-#else
-static inline int nft_masq_module_init_inet(void) { return 0; }
-static inline void nft_masq_module_exit_inet(void) {}
 #endif
 
 static int __init nft_masq_module_init(void)
@@ -267,23 +226,15 @@ static int __init nft_masq_module_init(void)
 	if (ret < 0)
 		return ret;
 
-	ret = nft_masq_module_init_inet();
-	if (ret < 0) {
-		nft_masq_module_exit_ipv6();
-		return ret;
-	}
-
 	ret = nft_register_expr(&nft_masq_ipv4_type);
 	if (ret < 0) {
-		nft_masq_module_exit_inet();
 		nft_masq_module_exit_ipv6();
 		return ret;
 	}
 
-	ret = nf_nat_masquerade_inet_register_notifiers();
+	ret = nf_nat_masquerade_ipv4_register_notifier();
 	if (ret < 0) {
 		nft_masq_module_exit_ipv6();
-		nft_masq_module_exit_inet();
 		nft_unregister_expr(&nft_masq_ipv4_type);
 		return ret;
 	}
@@ -294,9 +245,8 @@ static int __init nft_masq_module_init(void)
 static void __exit nft_masq_module_exit(void)
 {
 	nft_masq_module_exit_ipv6();
-	nft_masq_module_exit_inet();
 	nft_unregister_expr(&nft_masq_ipv4_type);
-	nf_nat_masquerade_inet_unregister_notifiers();
+	nf_nat_masquerade_ipv4_unregister_notifier();
 }
 
 module_init(nft_masq_module_init);
@@ -304,4 +254,5 @@ module_exit(nft_masq_module_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Arturo Borrero Gonzalez <arturo@debian.org>");
-MODULE_ALIAS_NFT_EXPR("masq");
+MODULE_ALIAS_NFT_AF_EXPR(AF_INET6, "masq");
+MODULE_ALIAS_NFT_AF_EXPR(AF_INET, "masq");

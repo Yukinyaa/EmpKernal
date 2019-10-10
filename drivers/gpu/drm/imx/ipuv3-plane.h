@@ -27,6 +27,7 @@ struct ipu_plane {
 	int			dp_flow;
 
 	bool			disabling;
+	int			next_buf;
 };
 
 struct ipu_plane *ipu_plane_init(struct drm_device *dev, struct ipu_soc *ipu,

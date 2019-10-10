@@ -493,8 +493,7 @@ static int rpmsg_dev_remove(struct device *dev)
 	if (rpdev->ops->announce_destroy)
 		err = rpdev->ops->announce_destroy(rpdev);
 
-	if (rpdrv->remove)
-		rpdrv->remove(rpdev);
+	rpdrv->remove(rpdev);
 
 	dev_pm_domain_detach(dev, true);
 

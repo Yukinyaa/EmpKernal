@@ -22,7 +22,6 @@
 #include <linux/init.h>
 #include <linux/list.h>
 #include <linux/module.h>
-#include <linux/memory.h>
 
 #include <trace/syscall.h>
 
@@ -35,25 +34,16 @@
 #ifdef CONFIG_DYNAMIC_FTRACE
 
 int ftrace_arch_code_modify_prepare(void)
-    __acquires(&text_mutex)
 {
-	/*
-	 * Need to grab text_mutex to prevent a race from module loading
-	 * and live kernel patching from changing the text permissions while
-	 * ftrace has it set to "read/write".
-	 */
-	mutex_lock(&text_mutex);
 	set_kernel_text_rw();
 	set_all_modules_text_rw();
 	return 0;
 }
 
 int ftrace_arch_code_modify_post_process(void)
-    __releases(&text_mutex)
 {
 	set_all_modules_text_ro();
 	set_kernel_text_ro();
-	mutex_unlock(&text_mutex);
 	return 0;
 }
 
@@ -310,6 +300,7 @@ int ftrace_int3_handler(struct pt_regs *regs)
 
 	ip = regs->ip - INT3_INSN_SIZE;
 
+#ifdef CONFIG_X86_64
 	if (ftrace_location(ip)) {
 		int3_emulate_call(regs, (unsigned long)ftrace_regs_caller);
 		return 1;
@@ -321,6 +312,12 @@ int ftrace_int3_handler(struct pt_regs *regs)
 		int3_emulate_call(regs, ftrace_update_func_call);
 		return 1;
 	}
+#else
+	if (ftrace_location(ip) || is_ftrace_caller(ip)) {
+		int3_emulate_jmp(regs, ip + CALL_INSN_SIZE);
+		return 1;
+	}
+#endif
 
 	return 0;
 }
@@ -373,7 +370,7 @@ static int add_brk_on_nop(struct dyn_ftrace *rec)
 	return add_break(rec->ip, old);
 }
 
-static int add_breakpoints(struct dyn_ftrace *rec, bool enable)
+static int add_breakpoints(struct dyn_ftrace *rec, int enable)
 {
 	unsigned long ftrace_addr;
 	int ret;
@@ -481,7 +478,7 @@ static int add_update_nop(struct dyn_ftrace *rec)
 	return add_update_code(ip, new);
 }
 
-static int add_update(struct dyn_ftrace *rec, bool enable)
+static int add_update(struct dyn_ftrace *rec, int enable)
 {
 	unsigned long ftrace_addr;
 	int ret;
@@ -527,7 +524,7 @@ static int finish_update_nop(struct dyn_ftrace *rec)
 	return ftrace_write(ip, new, 1);
 }
 
-static int finish_update(struct dyn_ftrace *rec, bool enable)
+static int finish_update(struct dyn_ftrace *rec, int enable)
 {
 	unsigned long ftrace_addr;
 	int ret;
@@ -700,8 +697,12 @@ static inline void *alloc_tramp(unsigned long size)
 {
 	return module_alloc(size);
 }
-static inline void tramp_free(void *tramp)
+static inline void tramp_free(void *tramp, int size)
 {
+	int npages = PAGE_ALIGN(size) >> PAGE_SHIFT;
+
+	set_memory_nx((unsigned long)tramp, npages);
+	set_memory_rw((unsigned long)tramp, npages);
 	module_memfree(tramp);
 }
 #else
@@ -710,7 +711,7 @@ static inline void *alloc_tramp(unsigned long size)
 {
 	return NULL;
 }
-static inline void tramp_free(void *tramp) { }
+static inline void tramp_free(void *tramp, int size) { }
 #endif
 
 /* Defined as markers to the end of the ftrace default trampolines */
@@ -748,7 +749,6 @@ create_trampoline(struct ftrace_ops *ops, unsigned int *tramp_size)
 	unsigned long end_offset;
 	unsigned long op_offset;
 	unsigned long offset;
-	unsigned long npages;
 	unsigned long size;
 	unsigned long retq;
 	unsigned long *ptr;
@@ -781,7 +781,6 @@ create_trampoline(struct ftrace_ops *ops, unsigned int *tramp_size)
 		return 0;
 
 	*tramp_size = size + RET_SIZE + sizeof(void *);
-	npages = DIV_ROUND_UP(*tramp_size, PAGE_SIZE);
 
 	/* Copy ftrace_caller onto the trampoline memory */
 	ret = probe_kernel_read(trampoline, (void *)start_offset, size);
@@ -826,17 +825,9 @@ create_trampoline(struct ftrace_ops *ops, unsigned int *tramp_size)
 	/* ALLOC_TRAMP flags lets us know we created it */
 	ops->flags |= FTRACE_OPS_FL_ALLOC_TRAMP;
 
-	set_vm_flush_reset_perms(trampoline);
-
-	/*
-	 * Module allocation needs to be completed by making the page
-	 * executable. The page is still writable, which is a security hazard,
-	 * but anyhow ftrace breaks W^X completely.
-	 */
-	set_memory_x((unsigned long)trampoline, npages);
 	return (unsigned long)trampoline;
 fail:
-	tramp_free(trampoline);
+	tramp_free(trampoline, *tramp_size);
 	return 0;
 }
 
@@ -969,7 +960,7 @@ void arch_ftrace_trampoline_free(struct ftrace_ops *ops)
 	if (!ops || !(ops->flags & FTRACE_OPS_FL_ALLOC_TRAMP))
 		return;
 
-	tramp_free((void *)ops->trampoline);
+	tramp_free((void *)ops->trampoline, ops->trampoline_size);
 	ops->trampoline = 0;
 }
 

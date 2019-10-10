@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * arch/arm/mach-tegra/gpio.c
  *
@@ -7,6 +6,16 @@
  *
  * Author:
  *	Erik Gilling <konkers@google.com>
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
  */
 
 #include <linux/err.h>
@@ -541,8 +550,8 @@ DEFINE_SHOW_ATTRIBUTE(tegra_dbg_gpio);
 
 static void tegra_gpio_debuginit(struct tegra_gpio_info *tgi)
 {
-	debugfs_create_file("tegra_gpio", 0444, NULL, tgi,
-			    &tegra_dbg_gpio_fops);
+	(void) debugfs_create_file("tegra_gpio", 0444,
+				   NULL, tgi, &tegra_dbg_gpio_fops);
 }
 
 #else
@@ -560,6 +569,7 @@ static const struct dev_pm_ops tegra_gpio_pm_ops = {
 static int tegra_gpio_probe(struct platform_device *pdev)
 {
 	struct tegra_gpio_info *tgi;
+	struct resource *res;
 	struct tegra_gpio_bank *bank;
 	unsigned int gpio, i, j;
 	int ret;
@@ -635,7 +645,8 @@ static int tegra_gpio_probe(struct platform_device *pdev)
 		bank->tgi = tgi;
 	}
 
-	tgi->regs = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	tgi->regs = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(tgi->regs))
 		return PTR_ERR(tgi->regs);
 

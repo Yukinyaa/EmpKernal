@@ -159,8 +159,7 @@ static void _rtw_free_network(struct mlme_priv *pmlmepriv, struct wlan_network *
 	spin_unlock_bh(&free_queue->lock);
 }
 
-static void rtw_free_network_nolock(struct mlme_priv *pmlmepriv,
-				    struct wlan_network *pnetwork)
+void _rtw_free_network_nolock(struct	mlme_priv *pmlmepriv, struct wlan_network *pnetwork)
 {
 	struct __queue *free_queue = &pmlmepriv->free_bss_pool;
 
@@ -275,6 +274,12 @@ u8 *rtw_get_beacon_interval_from_ie(u8 *ie)
 static struct wlan_network *rtw_alloc_network(struct mlme_priv *pmlmepriv)
 {
 	return _rtw_alloc_network(pmlmepriv);
+}
+
+static void rtw_free_network_nolock(struct mlme_priv *pmlmepriv,
+				    struct wlan_network *pnetwork)
+{
+	_rtw_free_network_nolock(pmlmepriv, pnetwork);
 }
 
 int rtw_is_same_ibss(struct adapter *adapter, struct wlan_network *pnetwork)
@@ -1325,10 +1330,11 @@ void _rtw_join_timeout_handler (struct timer_list *t)
 					continue;
 				}
 				break;
+			} else {
+				DBG_88E("%s We've try roaming but fail\n", __func__);
+				rtw_indicate_disconnect(adapter);
+				break;
 			}
-			DBG_88E("%s We've try roaming but fail\n", __func__);
-			rtw_indicate_disconnect(adapter);
-			break;
 		}
 	} else {
 		rtw_indicate_disconnect(adapter);
@@ -1432,7 +1438,7 @@ static int rtw_check_join_candidate(struct mlme_priv *pmlmepriv
 			goto exit;
 	}
 
-	if (!*candidate || (*candidate)->network.Rssi < competitor->network.Rssi) {
+	if (*candidate == NULL || (*candidate)->network.Rssi < competitor->network.Rssi) {
 		*candidate = competitor;
 		updated = true;
 	}
@@ -1626,7 +1632,8 @@ int rtw_set_key(struct adapter *adapter, struct security_priv *psecuritypriv, in
 	pcmd->rsp = NULL;
 	pcmd->rspsz = 0;
 	INIT_LIST_HEAD(&pcmd->list);
-	return rtw_enqueue_cmd(pcmdpriv, pcmd);
+	res = rtw_enqueue_cmd(pcmdpriv, pcmd);
+	return res;
 
 err_free_parm:
 	kfree(psetkeyparm);
@@ -2052,16 +2059,17 @@ void _rtw_roaming(struct adapter *padapter, struct wlan_network *tgt_network)
 			do_join_r = rtw_do_join(padapter);
 			if (do_join_r == _SUCCESS) {
 				break;
-			}
-			DBG_88E("roaming do_join return %d\n", do_join_r);
-			pmlmepriv->to_roaming--;
-
-			if (pmlmepriv->to_roaming > 0) {
-				continue;
 			} else {
-				DBG_88E("%s(%d) -to roaming fail, indicate_disconnect\n", __func__, __LINE__);
-				rtw_indicate_disconnect(padapter);
-				break;
+				DBG_88E("roaming do_join return %d\n", do_join_r);
+				pmlmepriv->to_roaming--;
+
+				if (pmlmepriv->to_roaming > 0) {
+					continue;
+				} else {
+					DBG_88E("%s(%d) -to roaming fail, indicate_disconnect\n", __func__, __LINE__);
+					rtw_indicate_disconnect(padapter);
+					break;
+				}
 			}
 		}
 	}

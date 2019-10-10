@@ -29,17 +29,14 @@
  *    Thomas Hellstrom <thomas-at-tungstengraphics-dot-com>
  *    Dave Airlie
  */
-
-#include <linux/io.h>
 #include <linux/list.h>
 #include <linux/slab.h>
-
-#include <drm/drm_cache.h>
-#include <drm/drm_prime.h>
+#include <drm/drmP.h>
 #include <drm/radeon_drm.h>
-
+#include <drm/drm_cache.h>
 #include "radeon.h"
 #include "radeon_trace.h"
+
 
 int radeon_ttm_init(struct radeon_device *rdev);
 void radeon_ttm_fini(struct radeon_device *rdev);
@@ -542,7 +539,7 @@ int radeon_bo_list_validate(struct radeon_device *rdev,
 	u64 bytes_moved_threshold = radeon_bo_get_threshold_for_moves(rdev);
 
 	INIT_LIST_HEAD(&duplicates);
-	r = ttm_eu_reserve_buffers(ticket, head, true, &duplicates, true);
+	r = ttm_eu_reserve_buffers(ticket, head, true, &duplicates);
 	if (unlikely(r != 0)) {
 		return r;
 	}

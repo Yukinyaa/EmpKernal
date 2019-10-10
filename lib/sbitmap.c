@@ -1,7 +1,18 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2016 Facebook
  * Copyright (C) 2013-2014 Jens Axboe
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public
+ * License v2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 #include <linux/sched.h>
@@ -26,7 +37,9 @@ static inline bool sbitmap_deferred_clear(struct sbitmap *sb, int index)
 	/*
 	 * First get a stable cleared mask, setting the old mask to 0.
 	 */
-	mask = xchg(&sb->map[index].cleared, 0);
+	do {
+		mask = sb->map[index].cleared;
+	} while (cmpxchg(&sb->map[index].cleared, mask, 0) != mask);
 
 	/*
 	 * Now clear the masked bits in our free word
@@ -422,7 +435,7 @@ static void sbitmap_queue_update_wake_batch(struct sbitmap_queue *sbq,
 		 * to ensure that the batch size is updated before the wait
 		 * counts.
 		 */
-		smp_mb();
+		smp_mb__before_atomic();
 		for (i = 0; i < SBQ_WAIT_QUEUES; i++)
 			atomic_set(&sbq->ws[i].wait_cnt, 1);
 	}
@@ -514,8 +527,10 @@ static struct sbq_wait_state *sbq_wake_ptr(struct sbitmap_queue *sbq)
 		struct sbq_wait_state *ws = &sbq->ws[wake_index];
 
 		if (waitqueue_active(&ws->wait)) {
-			if (wake_index != atomic_read(&sbq->wake_index))
-				atomic_set(&sbq->wake_index, wake_index);
+			int o = atomic_read(&sbq->wake_index);
+
+			if (wake_index != o)
+				atomic_cmpxchg(&sbq->wake_index, o, wake_index);
 			return ws;
 		}
 

@@ -87,13 +87,14 @@ struct intel_vgpu_gm {
 
 /* Fences owned by a vGPU */
 struct intel_vgpu_fence {
-	struct i915_fence_reg *regs[INTEL_GVT_MAX_NUM_FENCES];
+	struct drm_i915_fence_reg *regs[INTEL_GVT_MAX_NUM_FENCES];
 	u32 base;
 	u32 size;
 };
 
 struct intel_vgpu_mmio {
 	void *vreg;
+	void *sreg;
 };
 
 #define INTEL_GVT_MAX_BAR_NUM 4
@@ -110,9 +111,11 @@ struct intel_vgpu_cfg_space {
 
 #define vgpu_cfg_space(vgpu) ((vgpu)->cfg_space.virtual_cfg_space)
 
+#define INTEL_GVT_MAX_PIPE 4
+
 struct intel_vgpu_irq {
 	bool irq_warn_once[INTEL_GVT_EVENT_MAX];
-	DECLARE_BITMAP(flip_done_event[I915_MAX_PIPES],
+	DECLARE_BITMAP(flip_done_event[INTEL_GVT_MAX_PIPE],
 		       INTEL_GVT_EVENT_MAX);
 };
 
@@ -141,17 +144,17 @@ enum {
 
 struct intel_vgpu_submission_ops {
 	const char *name;
-	int (*init)(struct intel_vgpu *vgpu, intel_engine_mask_t engine_mask);
-	void (*clean)(struct intel_vgpu *vgpu, intel_engine_mask_t engine_mask);
-	void (*reset)(struct intel_vgpu *vgpu, intel_engine_mask_t engine_mask);
+	int (*init)(struct intel_vgpu *vgpu, unsigned long engine_mask);
+	void (*clean)(struct intel_vgpu *vgpu, unsigned long engine_mask);
+	void (*reset)(struct intel_vgpu *vgpu, unsigned long engine_mask);
 };
 
 struct intel_vgpu_submission {
 	struct intel_vgpu_execlist execlist[I915_NUM_ENGINES];
 	struct list_head workload_q_head[I915_NUM_ENGINES];
-	struct intel_context *shadow[I915_NUM_ENGINES];
 	struct kmem_cache *workloads;
 	atomic_t running_workload_num;
+	struct i915_gem_context *shadow_ctx;
 	union {
 		u64 i915_context_pml4;
 		u64 i915_context_pdps[GEN8_3LVL_PDPES];
@@ -390,7 +393,7 @@ int intel_gvt_load_firmware(struct intel_gvt *gvt);
 #define gvt_hidden_gmadr_end(gvt) (gvt_hidden_gmadr_base(gvt) \
 				   + gvt_hidden_sz(gvt) - 1)
 
-#define gvt_fence_sz(gvt) ((gvt)->dev_priv->ggtt.num_fences)
+#define gvt_fence_sz(gvt) (gvt->dev_priv->num_fence_regs)
 
 /* Aperture/GM space definitions for vGPU */
 #define vgpu_aperture_offset(vgpu)	((vgpu)->gm.low_gm_node.start)
@@ -446,6 +449,10 @@ void intel_vgpu_write_fence(struct intel_vgpu *vgpu,
 	(*(u64 *)(vgpu->mmio.vreg + i915_mmio_reg_offset(reg)))
 #define vgpu_vreg64(vgpu, offset) \
 	(*(u64 *)(vgpu->mmio.vreg + (offset)))
+#define vgpu_sreg_t(vgpu, reg) \
+	(*(u32 *)(vgpu->mmio.sreg + i915_mmio_reg_offset(reg)))
+#define vgpu_sreg(vgpu, offset) \
+	(*(u32 *)(vgpu->mmio.sreg + (offset)))
 
 #define for_each_active_vgpu(gvt, vgpu, id) \
 	idr_for_each_entry((&(gvt)->vgpu_idr), (vgpu), (id)) \
@@ -481,7 +488,7 @@ struct intel_vgpu *intel_gvt_create_vgpu(struct intel_gvt *gvt,
 void intel_gvt_destroy_vgpu(struct intel_vgpu *vgpu);
 void intel_gvt_release_vgpu(struct intel_vgpu *vgpu);
 void intel_gvt_reset_vgpu_locked(struct intel_vgpu *vgpu, bool dmlr,
-				 intel_engine_mask_t engine_mask);
+				 unsigned int engine_mask);
 void intel_gvt_reset_vgpu(struct intel_vgpu *vgpu);
 void intel_gvt_activate_vgpu(struct intel_vgpu *vgpu);
 void intel_gvt_deactivate_vgpu(struct intel_vgpu *vgpu);
@@ -584,12 +591,12 @@ enum {
 
 static inline void mmio_hw_access_pre(struct drm_i915_private *dev_priv)
 {
-	intel_runtime_pm_get(&dev_priv->runtime_pm);
+	intel_runtime_pm_get(dev_priv);
 }
 
 static inline void mmio_hw_access_post(struct drm_i915_private *dev_priv)
 {
-	intel_runtime_pm_put_unchecked(&dev_priv->runtime_pm);
+	intel_runtime_pm_put_unchecked(dev_priv);
 }
 
 /**

@@ -295,8 +295,7 @@ char *tomoyo_realpath_from_path(const struct path *path)
 		 * or dentry without vfsmount.
 		 */
 		if (!path->mnt ||
-		    (!inode->i_op->rename &&
-		     !(sb->s_type->fs_flags & FS_REQUIRES_DEV)))
+		    (!inode->i_op->rename))
 			pos = tomoyo_get_local_path(path->dentry, buf,
 						    buf_len - 1);
 		/* Get absolute name for the rest. */

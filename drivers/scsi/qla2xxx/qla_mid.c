@@ -905,8 +905,7 @@ static void qla_ctrlvp_sp_done(void *s, int res)
 {
 	struct srb *sp = s;
 
-	if (sp->comp)
-		complete(sp->comp);
+	complete(&sp->comp);
 	/* don't free sp here. Let the caller do the free */
 }
 
@@ -923,7 +922,6 @@ int qla24xx_control_vp(scsi_qla_host_t *vha, int cmd)
 	struct qla_hw_data *ha = vha->hw;
 	int	vp_index = vha->vp_idx;
 	struct scsi_qla_host *base_vha = pci_get_drvdata(ha->pdev);
-	DECLARE_COMPLETION_ONSTACK(comp);
 	srb_t *sp;
 
 	ql_dbg(ql_dbg_vport, vha, 0x10c1,
@@ -938,7 +936,6 @@ int qla24xx_control_vp(scsi_qla_host_t *vha, int cmd)
 
 	sp->type = SRB_CTRL_VP;
 	sp->name = "ctrl_vp";
-	sp->comp = &comp;
 	sp->done = qla_ctrlvp_sp_done;
 	sp->u.iocb_cmd.timeout = qla2x00_async_iocb_timeout;
 	qla2x00_init_timer(sp, qla2x00_get_async_timeout(vha) + 2);
@@ -956,9 +953,7 @@ int qla24xx_control_vp(scsi_qla_host_t *vha, int cmd)
 	ql_dbg(ql_dbg_vport, vha, 0x113f, "%s hndl %x submitted\n",
 	    sp->name, sp->handle);
 
-	wait_for_completion(&comp);
-	sp->comp = NULL;
-
+	wait_for_completion(&sp->comp);
 	rval = sp->rc;
 	switch (rval) {
 	case QLA_FUNCTION_TIMEOUT:

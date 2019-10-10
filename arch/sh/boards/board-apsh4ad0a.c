@@ -15,7 +15,7 @@
 #include <linux/irq.h>
 #include <linux/clk.h>
 #include <asm/machvec.h>
-#include <linux/sizes.h>
+#include <asm/sizes.h>
 
 /* Dummy supplies, where voltage doesn't matter */
 static struct regulator_consumer_supply dummy_supplies[] = {

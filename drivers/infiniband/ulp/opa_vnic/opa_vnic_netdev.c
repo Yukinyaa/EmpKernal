@@ -95,7 +95,8 @@ static netdev_tx_t opa_netdev_start_xmit(struct sk_buff *skb,
 }
 
 static u16 opa_vnic_select_queue(struct net_device *netdev, struct sk_buff *skb,
-				 struct net_device *sb_dev)
+				 struct net_device *sb_dev,
+				 select_queue_fallback_t fallback)
 {
 	struct opa_vnic_adapter *adapter = opa_vnic_priv(netdev);
 	struct opa_vnic_skb_mdata *mdata;
@@ -105,7 +106,8 @@ static u16 opa_vnic_select_queue(struct net_device *netdev, struct sk_buff *skb,
 	mdata = skb_push(skb, sizeof(*mdata));
 	mdata->entropy = opa_vnic_calc_entropy(skb);
 	mdata->vl = opa_vnic_get_vl(adapter, skb);
-	rc = adapter->rn_ops->ndo_select_queue(netdev, skb, sb_dev);
+	rc = adapter->rn_ops->ndo_select_queue(netdev, skb,
+					       sb_dev, fallback);
 	skb_pull(skb, sizeof(*mdata));
 	return rc;
 }

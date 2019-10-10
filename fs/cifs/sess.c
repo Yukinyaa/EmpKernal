@@ -159,16 +159,13 @@ static void ascii_ssetup_strings(char **pbcc_area, struct cifs_ses *ses,
 				 const struct nls_table *nls_cp)
 {
 	char *bcc_ptr = *pbcc_area;
-	int len;
 
 	/* copy user */
 	/* BB what about null user mounts - check that we do this BB */
 	/* copy user */
 	if (ses->user_name != NULL) {
-		len = strscpy(bcc_ptr, ses->user_name, CIFS_MAX_USERNAME_LEN);
-		if (WARN_ON_ONCE(len < 0))
-			len = CIFS_MAX_USERNAME_LEN - 1;
-		bcc_ptr += len;
+		strncpy(bcc_ptr, ses->user_name, CIFS_MAX_USERNAME_LEN);
+		bcc_ptr += strnlen(ses->user_name, CIFS_MAX_USERNAME_LEN);
 	}
 	/* else null user mount */
 	*bcc_ptr = 0;
@@ -176,10 +173,8 @@ static void ascii_ssetup_strings(char **pbcc_area, struct cifs_ses *ses,
 
 	/* copy domain */
 	if (ses->domainName != NULL) {
-		len = strscpy(bcc_ptr, ses->domainName, CIFS_MAX_DOMAINNAME_LEN);
-		if (WARN_ON_ONCE(len < 0))
-			len = CIFS_MAX_DOMAINNAME_LEN - 1;
-		bcc_ptr += len;
+		strncpy(bcc_ptr, ses->domainName, CIFS_MAX_DOMAINNAME_LEN);
+		bcc_ptr += strnlen(ses->domainName, CIFS_MAX_DOMAINNAME_LEN);
 	} /* else we will send a null domain name
 	     so the server will default to its own domain */
 	*bcc_ptr = 0;
@@ -247,10 +242,9 @@ static void decode_ascii_ssetup(char **pbcc_area, __u16 bleft,
 
 	kfree(ses->serverOS);
 
-	ses->serverOS = kmalloc(len + 1, GFP_KERNEL);
+	ses->serverOS = kzalloc(len + 1, GFP_KERNEL);
 	if (ses->serverOS) {
-		memcpy(ses->serverOS, bcc_ptr, len);
-		ses->serverOS[len] = 0;
+		strncpy(ses->serverOS, bcc_ptr, len);
 		if (strncmp(ses->serverOS, "OS/2", 4) == 0)
 			cifs_dbg(FYI, "OS/2 server\n");
 	}
@@ -264,11 +258,9 @@ static void decode_ascii_ssetup(char **pbcc_area, __u16 bleft,
 
 	kfree(ses->serverNOS);
 
-	ses->serverNOS = kmalloc(len + 1, GFP_KERNEL);
-	if (ses->serverNOS) {
-		memcpy(ses->serverNOS, bcc_ptr, len);
-		ses->serverNOS[len] = 0;
-	}
+	ses->serverNOS = kzalloc(len + 1, GFP_KERNEL);
+	if (ses->serverNOS)
+		strncpy(ses->serverNOS, bcc_ptr, len);
 
 	bcc_ptr += len + 1;
 	bleft -= len + 1;

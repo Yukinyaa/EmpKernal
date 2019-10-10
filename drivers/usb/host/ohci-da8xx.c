@@ -40,6 +40,8 @@ struct da8xx_ohci_hcd {
 	struct phy *usb11_phy;
 	struct regulator *vbus_reg;
 	struct notifier_block nb;
+	unsigned int reg_enabled;
+	struct gpio_desc *vbus_gpio;
 	struct gpio_desc *oc_gpio;
 };
 
@@ -90,21 +92,29 @@ static int ohci_da8xx_set_power(struct usb_hcd *hcd, int on)
 	struct device *dev = hcd->self.controller;
 	int ret;
 
+	if (da8xx_ohci->vbus_gpio) {
+		gpiod_set_value_cansleep(da8xx_ohci->vbus_gpio, on);
+		return 0;
+	}
+
 	if (!da8xx_ohci->vbus_reg)
 		return 0;
 
-	if (on) {
+	if (on && !da8xx_ohci->reg_enabled) {
 		ret = regulator_enable(da8xx_ohci->vbus_reg);
 		if (ret) {
 			dev_err(dev, "Failed to enable regulator: %d\n", ret);
 			return ret;
 		}
-	} else {
+		da8xx_ohci->reg_enabled = 1;
+
+	} else if (!on && da8xx_ohci->reg_enabled) {
 		ret = regulator_disable(da8xx_ohci->vbus_reg);
 		if (ret) {
 			dev_err(dev, "Failed  to disable regulator: %d\n", ret);
 			return ret;
 		}
+		da8xx_ohci->reg_enabled = 0;
 	}
 
 	return 0;
@@ -113,6 +123,9 @@ static int ohci_da8xx_set_power(struct usb_hcd *hcd, int on)
 static int ohci_da8xx_get_power(struct usb_hcd *hcd)
 {
 	struct da8xx_ohci_hcd *da8xx_ohci = to_da8xx_ohci(hcd);
+
+	if (da8xx_ohci->vbus_gpio)
+		return gpiod_get_value_cansleep(da8xx_ohci->vbus_gpio);
 
 	if (da8xx_ohci->vbus_reg)
 		return regulator_is_enabled(da8xx_ohci->vbus_reg);
@@ -145,6 +158,9 @@ static int ohci_da8xx_get_oci(struct usb_hcd *hcd)
 static int ohci_da8xx_has_set_power(struct usb_hcd *hcd)
 {
 	struct da8xx_ohci_hcd *da8xx_ohci = to_da8xx_ohci(hcd);
+
+	if (da8xx_ohci->vbus_gpio)
+		return 1;
 
 	if (da8xx_ohci->vbus_reg)
 		return 1;
@@ -190,18 +206,12 @@ static int ohci_da8xx_regulator_event(struct notifier_block *nb,
 	return 0;
 }
 
-static irqreturn_t ohci_da8xx_oc_thread(int irq, void *data)
+static irqreturn_t ohci_da8xx_oc_handler(int irq, void *data)
 {
 	struct da8xx_ohci_hcd *da8xx_ohci = data;
-	struct device *dev = da8xx_ohci->hcd->self.controller;
-	int ret;
 
-	if (gpiod_get_value_cansleep(da8xx_ohci->oc_gpio) &&
-	    da8xx_ohci->vbus_reg) {
-		ret = regulator_disable(da8xx_ohci->vbus_reg);
-		if (ret)
-			dev_err(dev, "Failed to disable regulator: %d\n", ret);
-	}
+	if (gpiod_get_value(da8xx_ohci->oc_gpio))
+		gpiod_set_value(da8xx_ohci->vbus_gpio, 0);
 
 	return IRQ_HANDLED;
 }
@@ -414,6 +424,11 @@ static int ohci_da8xx_probe(struct platform_device *pdev)
 		}
 	}
 
+	da8xx_ohci->vbus_gpio = devm_gpiod_get_optional(dev, "vbus",
+							GPIOD_OUT_HIGH);
+	if (IS_ERR(da8xx_ohci->vbus_gpio))
+		goto err;
+
 	da8xx_ohci->oc_gpio = devm_gpiod_get_optional(dev, "oc", GPIOD_IN);
 	if (IS_ERR(da8xx_ohci->oc_gpio))
 		goto err;
@@ -423,9 +438,8 @@ static int ohci_da8xx_probe(struct platform_device *pdev)
 		if (oc_irq < 0)
 			goto err;
 
-		error = devm_request_threaded_irq(dev, oc_irq, NULL,
-				ohci_da8xx_oc_thread, IRQF_TRIGGER_RISING |
-				IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
+		error = devm_request_irq(dev, oc_irq, ohci_da8xx_oc_handler,
+				IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
 				"OHCI over-current indicator", da8xx_ohci);
 		if (error)
 			goto err;

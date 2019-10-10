@@ -2310,6 +2310,11 @@ static int bcm2048_vidioc_querycap(struct file *file, void *priv,
 	strscpy(capability->card, BCM2048_DRIVER_CARD,
 		sizeof(capability->card));
 	snprintf(capability->bus_info, 32, "I2C: 0x%X", bdev->client->addr);
+	capability->device_caps = V4L2_CAP_TUNER | V4L2_CAP_RADIO |
+					V4L2_CAP_HW_FREQ_SEEK;
+	capability->capabilities = capability->device_caps |
+		V4L2_CAP_DEVICE_CAPS;
+
 	return 0;
 }
 
@@ -2399,7 +2404,7 @@ static int bcm2048_vidioc_g_audio(struct file *file, void *priv,
 	if (audio->index > 1)
 		return -EINVAL;
 
-	strscpy(audio->name, "Radio", sizeof(audio->name));
+	strncpy(audio->name, "Radio", 32);
 	audio->capability = V4L2_AUDCAP_STEREO;
 
 	return 0;
@@ -2427,7 +2432,7 @@ static int bcm2048_vidioc_g_tuner(struct file *file, void *priv,
 	if (tuner->index > 0)
 		return -EINVAL;
 
-	strscpy(tuner->name, "FM Receiver", sizeof(tuner->name));
+	strncpy(tuner->name, "FM Receiver", 32);
 	tuner->type = V4L2_TUNER_RADIO;
 	tuner->rangelow =
 		dev_to_v4l2(bcm2048_get_region_bottom_frequency(bdev));
@@ -2565,8 +2570,6 @@ static const struct video_device bcm2048_viddev_template = {
 	.name			= BCM2048_DRIVER_NAME,
 	.release		= video_device_release_empty,
 	.ioctl_ops		= &bcm2048_ioctl_ops,
-	.device_caps		= V4L2_CAP_TUNER | V4L2_CAP_RADIO |
-				  V4L2_CAP_HW_FREQ_SEEK,
 };
 
 /*

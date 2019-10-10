@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/arch/arm/mach-pxa/lubbock.c
  *
@@ -7,6 +6,10 @@
  *  Author:	Nicolas Pitre
  *  Created:	Jun 15, 2001
  *  Copyright:	MontaVista Software Inc.
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License version 2 as
+ *  published by the Free Software Foundation.
  */
 #include <linux/clkdev.h>
 #include <linux/gpio.h>
@@ -36,7 +39,7 @@
 #include <asm/mach-types.h>
 #include <mach/hardware.h>
 #include <asm/irq.h>
-#include <linux/sizes.h>
+#include <asm/sizes.h>
 
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
@@ -116,11 +119,12 @@ void lubbock_set_hexled(uint32_t value)
 
 static struct gpio_chip *lubbock_misc_wr_gc;
 
-static void lubbock_set_misc_wr(unsigned int mask, unsigned int set)
+void lubbock_set_misc_wr(unsigned int mask, unsigned int set)
 {
 	unsigned long m = mask, v = set;
 	lubbock_misc_wr_gc->set_multiple(lubbock_misc_wr_gc, &m, &v);
 }
+EXPORT_SYMBOL(lubbock_set_misc_wr);
 
 static int lubbock_udc_is_connected(void)
 {

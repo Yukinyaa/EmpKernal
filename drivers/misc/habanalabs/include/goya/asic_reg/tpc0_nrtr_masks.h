@@ -206,3 +206,4 @@
 #define TPC0_NRTR_NON_LIN_SCRAMB_EN_MASK                             0x1
 
 #endif /* ASIC_REG_TPC0_NRTR_MASKS_H_ */
+

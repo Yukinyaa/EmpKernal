@@ -1,7 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * net/psample/psample.c - Netlink channel for packet sampling
  * Copyright (c) 2017 Yotam Gigi <yotamg@mellanox.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/types.h>
@@ -97,7 +100,6 @@ static int psample_nl_cmd_get_group_dumpit(struct sk_buff *msg,
 static const struct genl_ops psample_nl_ops[] = {
 	{
 		.cmd = PSAMPLE_CMD_GET_GROUP,
-		.validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
 		.dumpit = psample_nl_cmd_get_group_dumpit,
 		/* can be retrieved by unprivileged users */
 	}
@@ -154,7 +156,7 @@ static void psample_group_destroy(struct psample_group *group)
 {
 	psample_group_notify(group, PSAMPLE_CMD_DEL_GROUP);
 	list_del(&group->list);
-	kfree_rcu(group, rcu);
+	kfree(group);
 }
 
 static struct psample_group *

@@ -1,7 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * net/sched/act_sample.c - Packet sampling tc action
  * Copyright (c) 2017 Yotam Gigi <yotamg@mellanox.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #include <linux/types.h>
@@ -41,8 +44,8 @@ static int tcf_sample_init(struct net *net, struct nlattr *nla,
 	struct tc_action_net *tn = net_generic(net, sample_net_id);
 	struct nlattr *tb[TCA_SAMPLE_MAX + 1];
 	struct psample_group *psample_group;
-	u32 psample_group_num, rate, index;
 	struct tcf_chain *goto_ch = NULL;
+	u32 psample_group_num, rate;
 	struct tc_sample *parm;
 	struct tcf_sample *s;
 	bool exists = false;
@@ -50,8 +53,7 @@ static int tcf_sample_init(struct net *net, struct nlattr *nla,
 
 	if (!nla)
 		return -EINVAL;
-	ret = nla_parse_nested_deprecated(tb, TCA_SAMPLE_MAX, nla,
-					  sample_policy, NULL);
+	ret = nla_parse_nested(tb, TCA_SAMPLE_MAX, nla, sample_policy, NULL);
 	if (ret < 0)
 		return ret;
 	if (!tb[TCA_SAMPLE_PARMS] || !tb[TCA_SAMPLE_RATE] ||
@@ -59,8 +61,8 @@ static int tcf_sample_init(struct net *net, struct nlattr *nla,
 		return -EINVAL;
 
 	parm = nla_data(tb[TCA_SAMPLE_PARMS]);
-	index = parm->index;
-	err = tcf_idr_check_alloc(tn, &index, a, bind);
+
+	err = tcf_idr_check_alloc(tn, &parm->index, a, bind);
 	if (err < 0)
 		return err;
 	exists = err;
@@ -68,10 +70,10 @@ static int tcf_sample_init(struct net *net, struct nlattr *nla,
 		return 0;
 
 	if (!exists) {
-		ret = tcf_idr_create(tn, index, est, a,
+		ret = tcf_idr_create(tn, parm->index, est, a,
 				     &act_sample_ops, bind, true);
 		if (ret) {
-			tcf_idr_cleanup(tn, index);
+			tcf_idr_cleanup(tn, parm->index);
 			return ret;
 		}
 		ret = ACT_P_CREATED;
@@ -102,17 +104,13 @@ static int tcf_sample_init(struct net *net, struct nlattr *nla,
 	goto_ch = tcf_action_set_ctrlact(*a, parm->action, goto_ch);
 	s->rate = rate;
 	s->psample_group_num = psample_group_num;
-	rcu_swap_protected(s->psample_group, psample_group,
-			   lockdep_is_held(&s->tcf_lock));
+	RCU_INIT_POINTER(s->psample_group, psample_group);
 
 	if (tb[TCA_SAMPLE_TRUNC_SIZE]) {
 		s->truncate = true;
 		s->trunc_size = nla_get_u32(tb[TCA_SAMPLE_TRUNC_SIZE]);
 	}
 	spin_unlock_bh(&s->tcf_lock);
-
-	if (psample_group)
-		psample_group_put(psample_group);
 	if (goto_ch)
 		tcf_chain_put_by_act(goto_ch);
 
@@ -269,7 +267,7 @@ static __net_init int sample_init_net(struct net *net)
 {
 	struct tc_action_net *tn = net_generic(net, sample_net_id);
 
-	return tc_action_net_init(net, tn, &act_sample_ops);
+	return tc_action_net_init(tn, &act_sample_ops);
 }
 
 static void __net_exit sample_exit_net(struct list_head *net_list)

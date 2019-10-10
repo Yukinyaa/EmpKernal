@@ -15,13 +15,15 @@
 #include <linux/mutex.h>
 #include <net/gen_stats.h>
 #include <net/rtnetlink.h>
-#include <net/flow_offload.h>
 
 struct Qdisc_ops;
 struct qdisc_walker;
 struct tcf_walker;
 struct module;
 struct bpf_flow_keys;
+
+typedef int tc_setup_cb_t(enum tc_setup_type type,
+			  void *type_data, void *cb_priv);
 
 typedef int tc_indr_block_bind_cb_t(struct net_device *dev, void *cb_priv,
 				    enum tc_setup_type type, void *type_data);
@@ -50,7 +52,10 @@ struct qdisc_size_table {
 struct qdisc_skb_head {
 	struct sk_buff	*head;
 	struct sk_buff	*tail;
-	__u32		qlen;
+	union {
+		u32		qlen;
+		atomic_t	atomic_qlen;
+	};
 	spinlock_t	lock;
 };
 
@@ -108,9 +113,6 @@ struct Qdisc {
 
 	spinlock_t		busylock ____cacheline_aligned_in_smp;
 	spinlock_t		seqlock;
-
-	/* for NOLOCK qdisc, true if there are no enqueued skbs */
-	bool			empty;
 	struct rcu_head		rcu;
 };
 
@@ -141,24 +143,11 @@ static inline bool qdisc_is_running(struct Qdisc *qdisc)
 	return (raw_read_seqcount(&qdisc->running) & 1) ? true : false;
 }
 
-static inline bool qdisc_is_percpu_stats(const struct Qdisc *q)
-{
-	return q->flags & TCQ_F_CPUSTATS;
-}
-
-static inline bool qdisc_is_empty(const struct Qdisc *qdisc)
-{
-	if (qdisc_is_percpu_stats(qdisc))
-		return qdisc->empty;
-	return !qdisc->q.qlen;
-}
-
 static inline bool qdisc_run_begin(struct Qdisc *qdisc)
 {
 	if (qdisc->flags & TCQ_F_NOLOCK) {
 		if (!spin_trylock(&qdisc->seqlock))
 			return false;
-		qdisc->empty = false;
 	} else if (qdisc_is_running(qdisc)) {
 		return false;
 	}
@@ -277,7 +266,7 @@ struct tcf_result {
 		};
 		const struct tcf_proto *goto_tp;
 
-		/* used in the skb_tc_reinsert function */
+		/* used by the TC_ACT_REINSERT action */
 		struct {
 			bool		ingress;
 			struct gnet_stats_queue *qstats;
@@ -311,7 +300,7 @@ struct tcf_proto_ops {
 	void			(*walk)(struct tcf_proto *tp,
 					struct tcf_walker *arg, bool rtnl_held);
 	int			(*reoffload)(struct tcf_proto *tp, bool add,
-					     flow_setup_cb_t *cb, void *cb_priv,
+					     tc_setup_cb_t *cb, void *cb_priv,
 					     struct netlink_ext_ack *extack);
 	void			(*bind_class)(void *, u32, unsigned long);
 	void *			(*tmplt_create)(struct net *net,
@@ -362,10 +351,13 @@ struct tcf_proto {
 };
 
 struct qdisc_skb_cb {
-	struct {
-		unsigned int		pkt_len;
-		u16			slave_dev_queue_mapping;
-		u16			tc_classid;
+	union {
+		struct {
+			unsigned int		pkt_len;
+			u16			slave_dev_queue_mapping;
+			u16			tc_classid;
+		};
+		struct bpf_flow_keys *flow_keys;
 	};
 #define QDISC_CB_PRIV_LEN 20
 	unsigned char		data[QDISC_CB_PRIV_LEN];
@@ -399,7 +391,7 @@ struct tcf_block {
 	refcount_t refcnt;
 	struct net *net;
 	struct Qdisc *q;
-	struct flow_block flow_block;
+	struct list_head cb_list;
 	struct list_head owner_list;
 	bool keep_dst;
 	unsigned int offloadcnt; /* Number of oddloaded filters */
@@ -478,27 +470,19 @@ static inline void qdisc_cb_private_validate(const struct sk_buff *skb, int sz)
 	BUILD_BUG_ON(sizeof(qcb->data) < sz);
 }
 
-static inline int qdisc_qlen_cpu(const struct Qdisc *q)
-{
-	return this_cpu_ptr(q->cpu_qstats)->qlen;
-}
-
 static inline int qdisc_qlen(const struct Qdisc *q)
 {
 	return q->q.qlen;
 }
 
-static inline int qdisc_qlen_sum(const struct Qdisc *q)
+static inline u32 qdisc_qlen_sum(const struct Qdisc *q)
 {
-	__u32 qlen = q->qstats.qlen;
-	int i;
+	u32 qlen = q->qstats.qlen;
 
-	if (qdisc_is_percpu_stats(q)) {
-		for_each_possible_cpu(i)
-			qlen += per_cpu_ptr(q->cpu_qstats, i)->qlen;
-	} else {
+	if (q->flags & TCQ_F_NOLOCK)
+		qlen += atomic_read(&q->q.atomic_qlen);
+	else
 		qlen += q->q.qlen;
-	}
 
 	return qlen;
 }
@@ -752,7 +736,7 @@ static inline bool qdisc_all_tx_empty(const struct net_device *dev)
 		struct netdev_queue *txq = netdev_get_tx_queue(dev, i);
 		const struct Qdisc *q = rcu_dereference(txq->qdisc);
 
-		if (!qdisc_is_empty(q)) {
+		if (q->q.qlen) {
 			rcu_read_unlock();
 			return false;
 		}
@@ -822,6 +806,11 @@ static inline int qdisc_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	return sch->enqueue(skb, sch, to_free);
 }
 
+static inline bool qdisc_is_percpu_stats(const struct Qdisc *q)
+{
+	return q->flags & TCQ_F_CPUSTATS;
+}
+
 static inline void _bstats_update(struct gnet_stats_basic_packed *bstats,
 				  __u64 bytes, __u32 packets)
 {
@@ -889,14 +878,14 @@ static inline void qdisc_qstats_cpu_backlog_inc(struct Qdisc *sch,
 	this_cpu_add(sch->cpu_qstats->backlog, qdisc_pkt_len(skb));
 }
 
-static inline void qdisc_qstats_cpu_qlen_inc(struct Qdisc *sch)
+static inline void qdisc_qstats_atomic_qlen_inc(struct Qdisc *sch)
 {
-	this_cpu_inc(sch->cpu_qstats->qlen);
+	atomic_inc(&sch->q.atomic_qlen);
 }
 
-static inline void qdisc_qstats_cpu_qlen_dec(struct Qdisc *sch)
+static inline void qdisc_qstats_atomic_qlen_dec(struct Qdisc *sch)
 {
-	this_cpu_dec(sch->cpu_qstats->qlen);
+	atomic_dec(&sch->q.atomic_qlen);
 }
 
 static inline void qdisc_qstats_cpu_requeues_inc(struct Qdisc *sch)
@@ -1106,32 +1095,6 @@ static inline struct sk_buff *qdisc_peek_dequeued(struct Qdisc *sch)
 	return skb;
 }
 
-static inline void qdisc_update_stats_at_dequeue(struct Qdisc *sch,
-						 struct sk_buff *skb)
-{
-	if (qdisc_is_percpu_stats(sch)) {
-		qdisc_qstats_cpu_backlog_dec(sch, skb);
-		qdisc_bstats_cpu_update(sch, skb);
-		qdisc_qstats_cpu_qlen_dec(sch);
-	} else {
-		qdisc_qstats_backlog_dec(sch, skb);
-		qdisc_bstats_update(sch, skb);
-		sch->q.qlen--;
-	}
-}
-
-static inline void qdisc_update_stats_at_enqueue(struct Qdisc *sch,
-						 unsigned int pkt_len)
-{
-	if (qdisc_is_percpu_stats(sch)) {
-		qdisc_qstats_cpu_qlen_inc(sch);
-		this_cpu_add(sch->cpu_qstats->backlog, pkt_len);
-	} else {
-		sch->qstats.backlog += pkt_len;
-		sch->q.qlen++;
-	}
-}
-
 /* use instead of qdisc->dequeue() for all qdiscs queried with ->peek() */
 static inline struct sk_buff *qdisc_dequeue_peeked(struct Qdisc *sch)
 {
@@ -1139,13 +1102,8 @@ static inline struct sk_buff *qdisc_dequeue_peeked(struct Qdisc *sch)
 
 	if (skb) {
 		skb = __skb_dequeue(&sch->gso_skb);
-		if (qdisc_is_percpu_stats(sch)) {
-			qdisc_qstats_cpu_backlog_dec(sch, skb);
-			qdisc_qstats_cpu_qlen_dec(sch);
-		} else {
-			qdisc_qstats_backlog_dec(sch, skb);
-			sch->q.qlen--;
-		}
+		qdisc_qstats_backlog_dec(sch, skb);
+		sch->q.qlen--;
 	} else {
 		skb = sch->dequeue(sch);
 	}

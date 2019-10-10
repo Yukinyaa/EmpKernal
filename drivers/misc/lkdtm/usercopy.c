@@ -324,16 +324,14 @@ free_user:
 
 void lkdtm_USERCOPY_KERNEL_DS(void)
 {
-	char __user *user_ptr =
-		(char __user *)(0xFUL << (sizeof(unsigned long) * 8 - 4));
+	char __user *user_ptr = (char __user *)ERR_PTR(-EINVAL);
 	mm_segment_t old_fs = get_fs();
 	char buf[10] = {0};
 
-	pr_info("attempting copy_to_user() to noncanonical address: %px\n",
-		user_ptr);
+	pr_info("attempting copy_to_user on unmapped kernel address\n");
 	set_fs(KERNEL_DS);
-	if (copy_to_user(user_ptr, buf, sizeof(buf)) == 0)
-		pr_err("copy_to_user() to noncanonical address succeeded!?\n");
+	if (copy_to_user(user_ptr, buf, sizeof(buf)))
+		pr_info("copy_to_user un unmapped kernel address failed\n");
 	set_fs(old_fs);
 }
 

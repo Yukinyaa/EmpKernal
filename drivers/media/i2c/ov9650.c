@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Omnivision OV9650/OV9652 CMOS Image Sensor driver
  *
@@ -7,6 +6,10 @@
  * Register definitions and initial settings based on a driver written
  * by Vladimir Fonov.
  * Copyright (c) 2010, Vladimir Fonov
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 #include <linux/clk.h>
 #include <linux/delay.h>

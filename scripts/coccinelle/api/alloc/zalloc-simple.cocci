@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 ///
 /// Use zeroing allocator rather than allocator followed by memset with 0
 ///
@@ -7,9 +6,9 @@
 /// matched code has to be contiguous
 ///
 // Confidence: High
-// Copyright: (C) 2009-2010 Julia Lawall, Nicolas Palix, DIKU.
-// Copyright: (C) 2009-2010 Gilles Muller, INRIA/LiP6.
-// Copyright: (C) 2017 Himanshu Jha
+// Copyright: (C) 2009-2010 Julia Lawall, Nicolas Palix, DIKU.  GPLv2.
+// Copyright: (C) 2009-2010 Gilles Muller, INRIA/LiP6.  GPLv2.
+// Copyright: (C) 2017 Himanshu Jha GPLv2.
 // URL: http://coccinelle.lip6.fr/rules/kzalloc.html
 // Options: --no-includes --include-headers
 //

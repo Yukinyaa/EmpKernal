@@ -127,20 +127,19 @@ static struct watchdog_device a21_wdt = {
 
 static int a21_wdt_probe(struct platform_device *pdev)
 {
-	struct device *dev = &pdev->dev;
 	struct a21_wdt_drv *drv;
 	unsigned int reset = 0;
 	int num_gpios;
 	int ret;
 	int i;
 
-	drv = devm_kzalloc(dev, sizeof(struct a21_wdt_drv), GFP_KERNEL);
+	drv = devm_kzalloc(&pdev->dev, sizeof(struct a21_wdt_drv), GFP_KERNEL);
 	if (!drv)
 		return -ENOMEM;
 
-	num_gpios = gpiod_count(dev, NULL);
+	num_gpios = gpiod_count(&pdev->dev, NULL);
 	if (num_gpios != NUM_GPIOS) {
-		dev_err(dev, "gpios DT property wrong, got %d want %d",
+		dev_err(&pdev->dev, "gpios DT property wrong, got %d want %d",
 			num_gpios, NUM_GPIOS);
 		return -ENODEV;
 	}
@@ -153,9 +152,12 @@ static int a21_wdt_probe(struct platform_device *pdev)
 			gflags = GPIOD_ASIS;
 		else
 			gflags = GPIOD_IN;
-		drv->gpios[i] = devm_gpiod_get_index(dev, NULL, i, gflags);
-		if (IS_ERR(drv->gpios[i]))
-			return PTR_ERR(drv->gpios[i]);
+		drv->gpios[i] = devm_gpiod_get_index(&pdev->dev, NULL, i,
+						     gflags);
+		if (IS_ERR(drv->gpios[i])) {
+			ret = PTR_ERR(drv->gpios[i]);
+			return ret;
+		}
 
 		gpiod_set_consumer_name(drv->gpios[i], "MEN A21 Watchdog");
 
@@ -171,10 +173,10 @@ static int a21_wdt_probe(struct platform_device *pdev)
 		}
 	}
 
-	watchdog_init_timeout(&a21_wdt, 30, dev);
+	watchdog_init_timeout(&a21_wdt, 30, &pdev->dev);
 	watchdog_set_nowayout(&a21_wdt, nowayout);
 	watchdog_set_drvdata(&a21_wdt, drv);
-	a21_wdt.parent = dev;
+	a21_wdt.parent = &pdev->dev;
 
 	reset = a21_wdt_get_bootstatus(drv);
 	if (reset == 2)
@@ -187,13 +189,15 @@ static int a21_wdt_probe(struct platform_device *pdev)
 		a21_wdt.bootstatus |= WDIOF_EXTERN2;
 
 	drv->wdt = a21_wdt;
-	dev_set_drvdata(dev, drv);
+	dev_set_drvdata(&pdev->dev, drv);
 
-	ret = devm_watchdog_register_device(dev, &a21_wdt);
-	if (ret)
+	ret = devm_watchdog_register_device(&pdev->dev, &a21_wdt);
+	if (ret) {
+		dev_err(&pdev->dev, "Cannot register watchdog device\n");
 		return ret;
+	}
 
-	dev_info(dev, "MEN A21 watchdog timer driver enabled\n");
+	dev_info(&pdev->dev, "MEN A21 watchdog timer driver enabled\n");
 
 	return 0;
 }

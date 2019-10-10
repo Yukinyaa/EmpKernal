@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* cpwd.c - driver implementation for hardware watchdog
  * timers found on Sun Microsystems CP1400 and CP1500 boards.
  *
@@ -395,7 +394,7 @@ static int cpwd_open(struct inode *inode, struct file *f)
 
 	mutex_unlock(&cpwd_mutex);
 
-	return stream_open(inode, f);
+	return nonseekable_open(inode, f);
 }
 
 static int cpwd_release(struct inode *inode, struct file *file)

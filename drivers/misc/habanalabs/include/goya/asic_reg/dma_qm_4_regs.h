@@ -176,3 +176,4 @@
 #define mmDMA_QM_4_CQ_BUF_RDATA                                      0x42030C
 
 #endif /* ASIC_REG_DMA_QM_4_REGS_H_ */
+

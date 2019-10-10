@@ -340,7 +340,10 @@ static int lpc18xx_gpio_probe(struct platform_device *pdev)
 	index = of_property_match_string(dev->of_node, "reg-names", "gpio");
 	if (index < 0) {
 		/* To support backward compatibility take the first resource */
-		gc->base = devm_platform_ioremap_resource(pdev, 0);
+		struct resource *res;
+
+		res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+		gc->base = devm_ioremap_resource(dev, res);
 	} else {
 		struct resource res;
 

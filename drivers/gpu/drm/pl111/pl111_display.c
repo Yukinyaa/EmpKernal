@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * (C) COPYRIGHT 2012-2013 ARM Limited. All rights reserved.
  *
@@ -7,6 +6,12 @@
  * Copyright (c) 2006-2008 Intel Corporation
  * Copyright (c) 2007 Dave Airlie <airlied@linux.ie>
  * Copyright (C) 2011 Texas Instruments
+ *
+ * This program is free software and is provided to you under the terms of the
+ * GNU General Public License version 2 as published by the Free Software
+ * Foundation, and any use by you of this program is subject to the terms of
+ * such GNU licence.
+ *
  */
 
 #include <linux/amba/clcd-regs.h>
@@ -183,7 +188,7 @@ static void pl111_display_enable(struct drm_simple_display_pipe *pipe,
 			tim2 |= TIM2_IOE;
 
 		if (connector->display_info.bus_flags &
-		    DRM_BUS_FLAG_PIXDATA_DRIVE_NEGEDGE)
+		    DRM_BUS_FLAG_PIXDATA_NEGEDGE)
 			tim2 |= TIM2_IPC;
 	}
 
@@ -526,15 +531,14 @@ pl111_init_clock_divider(struct drm_device *drm)
 		dev_err(drm->dev, "CLCD: unable to get clcdclk.\n");
 		return PTR_ERR(parent);
 	}
-
-	spin_lock_init(&priv->tim2_lock);
-
 	/* If the clock divider is broken, use the parent directly */
 	if (priv->variant->broken_clockdivider) {
 		priv->clk = parent;
 		return 0;
 	}
 	parent_name = __clk_get_name(parent);
+
+	spin_lock_init(&priv->tim2_lock);
 	div->init = &init;
 
 	ret = devm_clk_hw_register(drm->dev, div);

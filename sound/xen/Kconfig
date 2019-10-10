@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 # ALSA Xen drivers
 
 config SND_XEN_FRONTEND

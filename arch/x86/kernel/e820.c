@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Low level x86 E820 memory map handling functions.
  *
@@ -74,32 +73,20 @@ EXPORT_SYMBOL(pci_mem_start);
  * This function checks if any part of the range <start,end> is mapped
  * with type.
  */
-static bool _e820__mapped_any(struct e820_table *table,
-			      u64 start, u64 end, enum e820_type type)
+bool e820__mapped_any(u64 start, u64 end, enum e820_type type)
 {
 	int i;
 
-	for (i = 0; i < table->nr_entries; i++) {
-		struct e820_entry *entry = &table->entries[i];
+	for (i = 0; i < e820_table->nr_entries; i++) {
+		struct e820_entry *entry = &e820_table->entries[i];
 
 		if (type && entry->type != type)
 			continue;
 		if (entry->addr >= end || entry->addr + entry->size <= start)
 			continue;
-		return true;
+		return 1;
 	}
-	return false;
-}
-
-bool e820__mapped_raw_any(u64 start, u64 end, enum e820_type type)
-{
-	return _e820__mapped_any(e820_table_firmware, start, end, type);
-}
-EXPORT_SYMBOL_GPL(e820__mapped_raw_any);
-
-bool e820__mapped_any(u64 start, u64 end, enum e820_type type)
-{
-	return _e820__mapped_any(e820_table, start, end, type);
+	return 0;
 }
 EXPORT_SYMBOL_GPL(e820__mapped_any);
 
@@ -1063,10 +1050,10 @@ static unsigned long __init e820_type_to_iores_desc(struct e820_entry *entry)
 	case E820_TYPE_NVS:		return IORES_DESC_ACPI_NV_STORAGE;
 	case E820_TYPE_PMEM:		return IORES_DESC_PERSISTENT_MEMORY;
 	case E820_TYPE_PRAM:		return IORES_DESC_PERSISTENT_MEMORY_LEGACY;
-	case E820_TYPE_RESERVED:	return IORES_DESC_RESERVED;
 	case E820_TYPE_RESERVED_KERN:	/* Fall-through: */
 	case E820_TYPE_RAM:		/* Fall-through: */
 	case E820_TYPE_UNUSABLE:	/* Fall-through: */
+	case E820_TYPE_RESERVED:	/* Fall-through: */
 	default:			return IORES_DESC_NONE;
 	}
 }

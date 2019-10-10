@@ -127,11 +127,10 @@ static inline void syscall_set_arguments(struct task_struct *task,
 		regs->u_regs[UREG_I0 + i] = args[i];
 }
 
-static inline int syscall_get_arch(struct task_struct *task)
+static inline int syscall_get_arch(void)
 {
 #if defined(CONFIG_SPARC64) && defined(CONFIG_COMPAT)
-	return test_tsk_thread_flag(task, TIF_32BIT)
-		? AUDIT_ARCH_SPARC : AUDIT_ARCH_SPARC64;
+	return in_compat_syscall() ? AUDIT_ARCH_SPARC : AUDIT_ARCH_SPARC64;
 #elif defined(CONFIG_SPARC64)
 	return AUDIT_ARCH_SPARC64;
 #else

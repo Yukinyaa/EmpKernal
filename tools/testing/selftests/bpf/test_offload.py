@@ -1,7 +1,6 @@
 #!/usr/bin/python3
 
 # Copyright (C) 2017 Netronome Systems, Inc.
-# Copyright (c) 2019 Mellanox Technologies. All rights reserved
 #
 # This software is licensed under the GNU General License Version 2,
 # June 1991 as shown in the file COPYING in the top-level directory of this
@@ -16,12 +15,10 @@
 
 from datetime import datetime
 import argparse
-import errno
 import json
 import os
 import pprint
 import random
-import re
 import string
 import struct
 import subprocess
@@ -309,8 +306,6 @@ class DebugfsDir:
 
         _, out = cmd('ls ' + path)
         for f in out.split():
-            if f == "ports":
-                continue
             p = os.path.join(path, f)
             if os.path.isfile(p):
                 _, out = cmd('cat %s/%s' % (path, f))
@@ -326,112 +321,42 @@ class DebugfsDir:
 
         return dfs
 
-class NetdevSimDev:
-    """
-    Class for netdevsim bus device and its attributes.
-    """
-
-    def __init__(self, port_count=1):
-        addr = 0
-        while True:
-            try:
-                with open("/sys/bus/netdevsim/new_device", "w") as f:
-                    f.write("%u %u" % (addr, port_count))
-            except OSError as e:
-                if e.errno == errno.ENOSPC:
-                    addr += 1
-                    continue
-                raise e
-            break
-        self.addr = addr
-
-        # As probe of netdevsim device might happen from a workqueue,
-        # so wait here until all netdevs appear.
-        self.wait_for_netdevs(port_count)
-
-        ret, out = cmd("udevadm settle", fail=False)
-        if ret:
-            raise Exception("udevadm settle failed")
-        ifnames = self.get_ifnames()
-
-        devs.append(self)
-        self.dfs_dir = "/sys/kernel/debug/netdevsim/netdevsim%u/" % addr
-
-        self.nsims = []
-        for port_index in range(port_count):
-            self.nsims.append(NetdevSim(self, port_index, ifnames[port_index]))
-
-    def get_ifnames(self):
-        ifnames = []
-        listdir = os.listdir("/sys/bus/netdevsim/devices/netdevsim%u/net/" % self.addr)
-        for ifname in listdir:
-            ifnames.append(ifname)
-        ifnames.sort()
-        return ifnames
-
-    def wait_for_netdevs(self, port_count):
-        timeout = 5
-        timeout_start = time.time()
-
-        while True:
-            try:
-                ifnames = self.get_ifnames()
-            except FileNotFoundError as e:
-                ifnames = []
-            if len(ifnames) == port_count:
-                break
-            if time.time() < timeout_start + timeout:
-                continue
-            raise Exception("netdevices did not appear within timeout")
-
-    def dfs_num_bound_progs(self):
-        path = os.path.join(self.dfs_dir, "bpf_bound_progs")
-        _, progs = cmd('ls %s' % (path))
-        return len(progs.split())
-
-    def dfs_get_bound_progs(self, expected):
-        progs = DebugfsDir(os.path.join(self.dfs_dir, "bpf_bound_progs"))
-        if expected is not None:
-            if len(progs) != expected:
-                fail(True, "%d BPF programs bound, expected %d" %
-                     (len(progs), expected))
-        return progs
-
-    def remove(self):
-        with open("/sys/bus/netdevsim/del_device", "w") as f:
-            f.write("%u" % self.addr)
-        devs.remove(self)
-
-    def remove_nsim(self, nsim):
-        self.nsims.remove(nsim)
-        with open("/sys/bus/netdevsim/devices/netdevsim%u/del_port" % self.addr ,"w") as f:
-            f.write("%u" % nsim.port_index)
-
 class NetdevSim:
     """
     Class for netdevsim netdevice and its attributes.
     """
 
-    def __init__(self, nsimdev, port_index, ifname):
-        # In case udev renamed the netdev to according to new schema,
-        # check if the name matches the port_index.
-        nsimnamere = re.compile("eni\d+np(\d+)")
-        match = nsimnamere.match(ifname)
-        if match and int(match.groups()[0]) != port_index + 1:
-            raise Exception("netdevice name mismatches the expected one")
+    def __init__(self, link=None):
+        self.link = link
 
-        self.nsimdev = nsimdev
-        self.port_index = port_index
+        self.dev = self._netdevsim_create()
+        devs.append(self)
+
         self.ns = ""
-        self.dfs_dir = "%s/ports/%u/" % (nsimdev.dfs_dir, port_index)
+
+        self.dfs_dir = '/sys/kernel/debug/netdevsim/%s' % (self.dev['ifname'])
+        self.sdev_dir = self.dfs_dir + '/sdev/'
         self.dfs_refresh()
-        _, [self.dev] = ip("link show dev %s" % ifname)
 
     def __getitem__(self, key):
         return self.dev[key]
 
+    def _netdevsim_create(self):
+        link = "" if self.link is None else "link " + self.link.dev['ifname']
+        _, old  = ip("link show")
+        ip("link add sim%d {link} type netdevsim".format(link=link))
+        _, new  = ip("link show")
+
+        for dev in new:
+            f = filter(lambda x: x["ifname"] == dev["ifname"], old)
+            if len(list(f)) == 0:
+                return dev
+
+        raise Exception("failed to create netdevsim device")
+
     def remove(self):
-        self.nsimdev.remove_nsim(self)
+        devs.remove(self)
+        ip("link del dev %s" % (self.dev["ifname"]), ns=self.ns)
 
     def dfs_refresh(self):
         self.dfs = DebugfsDir(self.dfs_dir)
@@ -442,9 +367,22 @@ class NetdevSim:
         _, data = cmd('cat %s' % (path))
         return data.strip()
 
+    def dfs_num_bound_progs(self):
+        path = os.path.join(self.sdev_dir, "bpf_bound_progs")
+        _, progs = cmd('ls %s' % (path))
+        return len(progs.split())
+
+    def dfs_get_bound_progs(self, expected):
+        progs = DebugfsDir(os.path.join(self.sdev_dir, "bpf_bound_progs"))
+        if expected is not None:
+            if len(progs) != expected:
+                fail(True, "%d BPF programs bound, expected %d" %
+                     (len(progs), expected))
+        return progs
+
     def wait_for_flush(self, bound=0, total=0, n_retry=20):
         for i in range(n_retry):
-            nbound = self.nsimdev.dfs_num_bound_progs()
+            nbound = self.dfs_num_bound_progs()
             nprogs = len(bpftool_prog_list())
             if nbound == bound and nprogs == total:
                 return
@@ -674,7 +612,7 @@ def test_spurios_extack(sim, obj, skip_hw, needle):
                             include_stderr=True)
     check_no_extack(res, needle)
 
-def test_multi_prog(simdev, sim, obj, modename, modeid):
+def test_multi_prog(sim, obj, modename, modeid):
     start_test("Test multi-attachment XDP - %s + offload..." %
                (modename or "default", ))
     sim.set_xdp(obj, "offload")
@@ -730,12 +668,11 @@ def test_multi_prog(simdev, sim, obj, modename, modeid):
     check_multi_basic(two_xdps)
 
     start_test("Test multi-attachment XDP - device remove...")
-    simdev.remove()
+    sim.remove()
 
-    simdev = NetdevSimDev()
-    sim, = simdev.nsims
+    sim = NetdevSim()
     sim.set_ethtool_tc_offloads(True)
-    return [simdev, sim]
+    return sim
 
 # Parse command line
 parser = argparse.ArgumentParser()
@@ -792,14 +729,12 @@ try:
     bytecode = bpf_bytecode("1,6 0 0 4294967295,")
 
     start_test("Test destruction of generic XDP...")
-    simdev = NetdevSimDev()
-    sim, = simdev.nsims
+    sim = NetdevSim()
     sim.set_xdp(obj, "generic")
-    simdev.remove()
+    sim.remove()
     bpftool_prog_list_wait(expected=0)
 
-    simdev = NetdevSimDev()
-    sim, = simdev.nsims
+    sim = NetdevSim()
     sim.tc_add_ingress()
 
     start_test("Test TC non-offloaded...")
@@ -809,7 +744,7 @@ try:
     start_test("Test TC non-offloaded isn't getting bound...")
     ret, _ = sim.cls_bpf_add_filter(obj, fail=False)
     fail(ret != 0, "Software TC filter did not load")
-    simdev.dfs_get_bound_progs(expected=0)
+    sim.dfs_get_bound_progs(expected=0)
 
     sim.tc_flush_filters()
 
@@ -826,7 +761,7 @@ try:
     start_test("Test TC offload by default...")
     ret, _ = sim.cls_bpf_add_filter(obj, fail=False)
     fail(ret != 0, "Software TC filter did not load")
-    simdev.dfs_get_bound_progs(expected=0)
+    sim.dfs_get_bound_progs(expected=0)
     ingress = sim.tc_show_ingress(expected=1)
     fltr = ingress[0]
     fail(not fltr["in_hw"], "Filter not offloaded by default")
@@ -836,7 +771,7 @@ try:
     start_test("Test TC cBPF bytcode tries offload by default...")
     ret, _ = sim.cls_bpf_add_filter(bytecode, fail=False)
     fail(ret != 0, "Software TC filter did not load")
-    simdev.dfs_get_bound_progs(expected=0)
+    sim.dfs_get_bound_progs(expected=0)
     ingress = sim.tc_show_ingress(expected=1)
     fltr = ingress[0]
     fail(not fltr["in_hw"], "Bytecode not offloaded by default")
@@ -904,7 +839,7 @@ try:
     check_verifier_log(err, "[netdevsim] Hello from netdevsim!")
 
     start_test("Test TC offload basics...")
-    dfs = simdev.dfs_get_bound_progs(expected=1)
+    dfs = sim.dfs_get_bound_progs(expected=1)
     progs = bpftool_prog_list(expected=1)
     ingress = sim.tc_show_ingress(expected=1)
 
@@ -939,20 +874,18 @@ try:
 
     start_test("Test destroying device gets rid of TC filters...")
     sim.cls_bpf_add_filter(obj, skip_sw=True)
-    simdev.remove()
+    sim.remove()
     bpftool_prog_list_wait(expected=0)
 
-    simdev = NetdevSimDev()
-    sim, = simdev.nsims
+    sim = NetdevSim()
     sim.set_ethtool_tc_offloads(True)
 
     start_test("Test destroying device gets rid of XDP...")
     sim.set_xdp(obj, "offload")
-    simdev.remove()
+    sim.remove()
     bpftool_prog_list_wait(expected=0)
 
-    simdev = NetdevSimDev()
-    sim, = simdev.nsims
+    sim = NetdevSim()
     sim.set_ethtool_tc_offloads(True)
 
     start_test("Test XDP prog reporting...")
@@ -1038,7 +971,7 @@ try:
     check_verifier_log(err, "[netdevsim] Hello from netdevsim!")
 
     start_test("Test XDP offload is device bound...")
-    dfs = simdev.dfs_get_bound_progs(expected=1)
+    dfs = sim.dfs_get_bound_progs(expected=1)
     dprog = dfs[0]
 
     fail(prog["id"] != link_xdp["id"], "Program IDs don't match")
@@ -1057,8 +990,7 @@ try:
     bpftool_prog_list_wait(expected=0)
 
     start_test("Test attempt to use a program for a wrong device...")
-    simdev2 = NetdevSimDev()
-    sim2, = simdev2.nsims
+    sim2 = NetdevSim()
     sim2.set_xdp(obj, "offload")
     pin_file, pinned = pin_prog("/sys/fs/bpf/tmp")
 
@@ -1066,7 +998,7 @@ try:
                               fail=False, include_stderr=True)
     fail(ret == 0, "Pinned program loaded for a different device accepted")
     check_extack_nsim(err, "program bound to different dev.", args)
-    simdev2.remove()
+    sim2.remove()
     ret, _, err = sim.set_xdp(pinned, "offload",
                               fail=False, include_stderr=True)
     fail(ret == 0, "Pinned program loaded for a removed device accepted")
@@ -1074,9 +1006,9 @@ try:
     rm(pin_file)
     bpftool_prog_list_wait(expected=0)
 
-    simdev, sim = test_multi_prog(simdev, sim, obj, "", 1)
-    simdev, sim = test_multi_prog(simdev, sim, obj, "drv", 1)
-    simdev, sim = test_multi_prog(simdev, sim, obj, "generic", 2)
+    sim = test_multi_prog(sim, obj, "", 1)
+    sim = test_multi_prog(sim, obj, "drv", 1)
+    sim = test_multi_prog(sim, obj, "generic", 2)
 
     start_test("Test mixing of TC and XDP...")
     sim.tc_add_ingress()
@@ -1123,15 +1055,15 @@ try:
 
     start_test("Test if netdev removal waits for translation...")
     delay_msec = 500
-    sim.dfs["dev/bpf_bind_verifier_delay"] = delay_msec
+    sim.dfs["bpf_bind_verifier_delay"] = delay_msec
     start = time.time()
     cmd_line = "tc filter add dev %s ingress bpf %s da skip_sw" % \
                (sim['ifname'], obj)
     tc_proc = cmd(cmd_line, background=True, fail=False)
     # Wait for the verifier to start
-    while simdev.dfs_num_bound_progs() <= 2:
+    while sim.dfs_num_bound_progs() <= 2:
         pass
-    simdev.remove()
+    sim.remove()
     end = time.time()
     ret, _ = cmd_result(tc_proc, fail=False)
     time_diff = end - start
@@ -1146,8 +1078,7 @@ try:
     clean_up()
     bpftool_prog_list_wait(expected=0)
 
-    simdev = NetdevSimDev()
-    sim, = simdev.nsims
+    sim = NetdevSim()
     map_obj = bpf_obj("sample_map_ret0.o")
     start_test("Test loading program with maps...")
     sim.set_xdp(map_obj, "offload", JSON=False) # map fixup msg breaks JSON
@@ -1169,7 +1100,7 @@ try:
 
     prog_file, _ = pin_prog("/sys/fs/bpf/tmp_prog")
     map_file, _ = pin_map("/sys/fs/bpf/tmp_map", idx=1, expected=2)
-    simdev.remove()
+    sim.remove()
 
     start_test("Test bpftool bound info reporting (removed dev)...")
     check_dev_info_removed(prog_file=prog_file, map_file=map_file)
@@ -1178,8 +1109,7 @@ try:
     clean_up()
     bpftool_prog_list_wait(expected=0)
 
-    simdev = NetdevSimDev()
-    sim, = simdev.nsims
+    sim = NetdevSim()
 
     start_test("Test map update (no flags)...")
     sim.set_xdp(map_obj, "offload", JSON=False) # map fixup msg breaks JSON
@@ -1260,29 +1190,27 @@ try:
     start_test("Test map remove...")
     sim.unset_xdp("offload")
     bpftool_map_list_wait(expected=0)
-    simdev.remove()
+    sim.remove()
 
-    simdev = NetdevSimDev()
-    sim, = simdev.nsims
+    sim = NetdevSim()
     sim.set_xdp(map_obj, "offload", JSON=False) # map fixup msg breaks JSON
-    simdev.remove()
+    sim.remove()
     bpftool_map_list_wait(expected=0)
 
     start_test("Test map creation fail path...")
-    simdev = NetdevSimDev()
-    sim, = simdev.nsims
+    sim = NetdevSim()
     sim.dfs["bpf_map_accept"] = "N"
     ret, _ = sim.set_xdp(map_obj, "offload", JSON=False, fail=False)
     fail(ret == 0,
          "netdevsim didn't refuse to create a map with offload disabled")
 
-    simdev.remove()
+    sim.remove()
 
     start_test("Test multi-dev ASIC program reuse...")
-    simdevA = NetdevSimDev()
-    simA, = simdevA.nsims
-    simdevB = NetdevSimDev(3)
-    simB1, simB2, simB3 = simdevB.nsims
+    simA = NetdevSim()
+    simB1 = NetdevSim()
+    simB2 = NetdevSim(link=simB1)
+    simB3 = NetdevSim(link=simB1)
     sims = (simA, simB1, simB2, simB3)
     simB = (simB1, simB2, simB3)
 
@@ -1294,13 +1222,13 @@ try:
     progB = bpf_pinned("/sys/fs/bpf/nsimB")
 
     simA.set_xdp(progA, "offload", JSON=False)
-    for d in simdevB.nsims:
+    for d in simB:
         d.set_xdp(progB, "offload", JSON=False)
 
     start_test("Test multi-dev ASIC cross-dev replace...")
     ret, _ = simA.set_xdp(progB, "offload", force=True, JSON=False, fail=False)
     fail(ret == 0, "cross-ASIC program allowed")
-    for d in simdevB.nsims:
+    for d in simB:
         ret, _ = d.set_xdp(progA, "offload", force=True, JSON=False, fail=False)
         fail(ret == 0, "cross-ASIC program allowed")
 
@@ -1312,7 +1240,7 @@ try:
                                fail=False, include_stderr=True)
     fail(ret == 0, "cross-ASIC program allowed")
     check_extack_nsim(err, "program bound to different dev.", args)
-    for d in simdevB.nsims:
+    for d in simB:
         ret, _, err = d.set_xdp(progA, "offload", force=True, JSON=False,
                                 fail=False, include_stderr=True)
         fail(ret == 0, "cross-ASIC program allowed")
@@ -1349,7 +1277,7 @@ try:
     start_test("Test multi-dev ASIC cross-dev destruction...")
     bpftool_prog_list_wait(expected=2)
 
-    simdevA.remove()
+    simA.remove()
     bpftool_prog_list_wait(expected=1)
 
     ifnameB = bpftool("prog show %s" % (progB))[1]["dev"]["ifname"]
@@ -1367,7 +1295,6 @@ try:
     fail(ifnameB != simB3['ifname'], "program not bound to remaining device")
 
     simB3.remove()
-    simdevB.remove()
     bpftool_prog_list_wait(expected=0)
 
     start_test("Test multi-dev ASIC cross-dev destruction - orphaned...")

@@ -45,6 +45,14 @@ struct mlxsw_sp_acl_block_binding {
 	bool ingress;
 };
 
+struct mlxsw_sp_acl_block {
+	struct list_head binding_list;
+	struct mlxsw_sp_acl_ruleset *ruleset_zero;
+	struct mlxsw_sp *mlxsw_sp;
+	unsigned int rule_count;
+	unsigned int disable_count;
+};
+
 struct mlxsw_sp_acl_ruleset_ht_key {
 	struct mlxsw_sp_acl_block *block;
 	u32 chain_index;
@@ -213,7 +221,6 @@ struct mlxsw_sp_acl_block *mlxsw_sp_acl_block_create(struct mlxsw_sp *mlxsw_sp,
 		return NULL;
 	INIT_LIST_HEAD(&block->binding_list);
 	block->mlxsw_sp = mlxsw_sp;
-	block->net = net;
 	return block;
 }
 
@@ -471,7 +478,7 @@ int mlxsw_sp_acl_rulei_commit(struct mlxsw_sp_acl_rule_info *rulei)
 void mlxsw_sp_acl_rulei_priority(struct mlxsw_sp_acl_rule_info *rulei,
 				 unsigned int priority)
 {
-	rulei->priority = priority;
+	rulei->priority = priority >> 16;
 }
 
 void mlxsw_sp_acl_rulei_keymask_u32(struct mlxsw_sp_acl_rule_info *rulei,

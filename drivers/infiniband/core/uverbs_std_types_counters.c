@@ -31,13 +31,11 @@
  * SOFTWARE.
  */
 
-#include "rdma_core.h"
 #include "uverbs.h"
 #include <rdma/uverbs_std_types.h>
 
 static int uverbs_free_counters(struct ib_uobject *uobject,
-				enum rdma_remove_reason why,
-				struct uverbs_attr_bundle *attrs)
+				enum rdma_remove_reason why)
 {
 	struct ib_counters *counters = uobject->object;
 	int ret;
@@ -54,7 +52,7 @@ static int UVERBS_HANDLER(UVERBS_METHOD_COUNTERS_CREATE)(
 {
 	struct ib_uobject *uobj = uverbs_attr_get_uobject(
 		attrs, UVERBS_ATTR_CREATE_COUNTERS_HANDLE);
-	struct ib_device *ib_dev = attrs->context->device;
+	struct ib_device *ib_dev = uobj->context->device;
 	struct ib_counters *counters;
 	int ret;
 

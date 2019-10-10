@@ -2,6 +2,7 @@
 #include "builtin.h"
 #include "perf.h"
 
+#include "util/util.h"
 #include "util/evlist.h"
 #include "util/cache.h"
 #include "util/evsel.h"
@@ -14,7 +15,6 @@
 #include "util/thread_map.h"
 #include "util/color.h"
 #include "util/stat.h"
-#include "util/string2.h"
 #include "util/callchain.h"
 #include "util/time-utils.h"
 
@@ -25,7 +25,6 @@
 
 #include <linux/kernel.h>
 #include <linux/log2.h>
-#include <linux/zalloc.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
 #include <inttypes.h>
@@ -37,7 +36,7 @@
 #include <api/fs/fs.h>
 #include <linux/time64.h>
 
-#include <linux/ctype.h>
+#include "sane_ctype.h"
 
 #define PR_SET_NAME		15               /* Set process name */
 #define MAX_CPUS		4096

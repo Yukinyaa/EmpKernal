@@ -122,7 +122,9 @@ int drm_crtc_register_all(struct drm_device *dev)
 	int ret = 0;
 
 	drm_for_each_crtc(crtc, dev) {
-		drm_debugfs_crtc_add(crtc);
+		if (drm_debugfs_crtc_add(crtc))
+			DRM_ERROR("Failed to initialize debugfs entry for CRTC '%s'.\n",
+				  crtc->name);
 
 		if (crtc->funcs->late_register)
 			ret = crtc->funcs->late_register(crtc);
@@ -556,10 +558,6 @@ int drm_mode_setcrtc(struct drm_device *dev, void *data,
 	DRM_DEBUG_KMS("[CRTC:%d:%s]\n", crtc->base.id, crtc->name);
 
 	plane = crtc->primary;
-
-	/* allow disabling with the primary plane leased */
-	if (crtc_req->mode_valid && !drm_lease_held(file_priv, plane->base.id))
-		return -EACCES;
 
 	mutex_lock(&crtc->dev->mode_config.mutex);
 	DRM_MODESET_LOCK_ALL_BEGIN(dev, ctx,

@@ -71,7 +71,7 @@ enum si_intf_state {
 
 static const char * const si_to_str[] = { "invalid", "kcs", "smic", "bt" };
 
-static bool initialized;
+static int initialized;
 
 /*
  * Indexes into stats[] in smi_info below.
@@ -1931,6 +1931,7 @@ static int try_smi_init(struct smi_info *new_smi)
 {
 	int rv = 0;
 	int i;
+	char *init_name = NULL;
 
 	pr_info("Trying %s-specified %s state machine at %s address 0x%lx, slave address 0x%x, irq %d\n",
 		ipmi_addr_src_to_str(new_smi->io.addr_source),
@@ -2072,6 +2073,7 @@ static int try_smi_init(struct smi_info *new_smi)
 		new_smi->io.io_cleanup = NULL;
 	}
 
+	kfree(init_name);
 	return rv;
 }
 
@@ -2124,7 +2126,7 @@ static int __init init_ipmi_si(void)
 	}
 
 skip_fallback_noirq:
-	initialized = true;
+	initialized = 1;
 	mutex_unlock(&smi_infos_lock);
 
 	if (type)

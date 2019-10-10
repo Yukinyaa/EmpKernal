@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * helper functions for vmalloc video4linux capture buffers
  *
@@ -7,7 +6,11 @@
  * into PAGE_SIZE chunks).  They also assume the driver does not need
  * to touch the video data.
  *
- * (c) 2007 Mauro Carvalho Chehab <mchehab@kernel.org>
+ * (c) 2007 Mauro Carvalho Chehab, <mchehab@kernel.org>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2
  */
 
 #include <linux/init.h>

@@ -267,7 +267,7 @@
 			#dma-cells = <2>;
 		};
 
-		nfc: nand-controller@1c03000 {
+		nfc: nand@1c03000 {
 			compatible = "allwinner,sun4i-a10-nand";
 			reg = <0x01c03000 0x1000>;
 			interrupts = <37>;
@@ -342,7 +342,6 @@
 				      "tcon-ch0",
 				      "tcon-ch1";
 			clock-output-names = "tcon0-pixel-clock";
-			#clock-cells = <0>;
 			dmas = <&dma SUN4I_DMA_DEDICATED 14>;
 
 			ports {
@@ -392,7 +391,6 @@
 				      "tcon-ch0",
 				      "tcon-ch1";
 			clock-output-names = "tcon1-pixel-clock";
-			#clock-cells = <0>;
 			dmas = <&dma SUN4I_DMA_DEDICATED 15>;
 
 			ports {
@@ -496,14 +494,13 @@
 			phy-names = "usb";
 			extcon = <&usbphy 0>;
 			allwinner,sram = <&otg_sram 1>;
-			dr_mode = "otg";
 			status = "disabled";
 		};
 
 		usbphy: phy@1c13400 {
 			#phy-cells = <1>;
 			compatible = "allwinner,sun4i-a10-usb-phy";
-			reg = <0x01c13400 0x10>, <0x01c14800 0x4>, <0x01c1c800 0x4>;
+			reg = <0x01c13400 0x10 0x01c14800 0x4 0x01c1c800 0x4>;
 			reg-names = "phy_ctrl", "pmu1", "pmu2";
 			clocks = <&ccu CLK_USB_PHY>;
 			clock-names = "usb_phy";
@@ -520,6 +517,7 @@
 			interrupts = <39>;
 			clocks = <&ccu CLK_AHB_EHCI0>;
 			phys = <&usbphy 1>;
+			phy-names = "usb";
 			status = "disabled";
 		};
 
@@ -529,6 +527,7 @@
 			interrupts = <64>;
 			clocks = <&ccu CLK_USB_OHCI0>, <&ccu CLK_AHB_OHCI0>;
 			phys = <&usbphy 1>;
+			phy-names = "usb";
 			status = "disabled";
 		};
 
@@ -608,6 +607,7 @@
 			interrupts = <40>;
 			clocks = <&ccu CLK_AHB_EHCI1>;
 			phys = <&usbphy 2>;
+			phy-names = "usb";
 			status = "disabled";
 		};
 
@@ -617,6 +617,7 @@
 			interrupts = <65>;
 			clocks = <&ccu CLK_USB_OHCI1>, <&ccu CLK_AHB_OHCI1>;
 			phys = <&usbphy 2>;
+			phy-names = "usb";
 			status = "disabled";
 		};
 

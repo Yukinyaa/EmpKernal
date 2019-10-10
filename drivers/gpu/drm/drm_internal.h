@@ -28,16 +28,8 @@
 
 #define DRM_IF_VERSION(maj, min) (maj << 16 | min)
 
-struct dentry;
-struct dma_buf;
-struct drm_connector;
-struct drm_crtc;
-struct drm_framebuffer;
-struct drm_gem_object;
-struct drm_master;
-struct drm_minor;
 struct drm_prime_file_private;
-struct drm_printer;
+struct dma_buf;
 
 /* drm_file.c */
 extern struct mutex drm_global_mutex;
@@ -79,10 +71,8 @@ int drm_legacy_modeset_ctl_ioctl(struct drm_device *dev, void *data,
 /* drm_irq.c */
 
 /* IOCTLS */
-#if IS_ENABLED(CONFIG_DRM_LEGACY)
 int drm_legacy_irq_control(struct drm_device *dev, void *data,
 			   struct drm_file *file_priv);
-#endif
 
 int drm_crtc_get_sequence_ioctl(struct drm_device *dev, void *data,
 				struct drm_file *filp);
@@ -101,8 +91,6 @@ int drm_dropmaster_ioctl(struct drm_device *dev, void *data,
 			 struct drm_file *file_priv);
 int drm_master_open(struct drm_file *file_priv);
 void drm_master_release(struct drm_file *file_priv);
-bool drm_master_internal_acquire(struct drm_device *dev);
-void drm_master_internal_release(struct drm_device *dev);
 
 /* drm_sysfs.c */
 extern struct class *drm_class;
@@ -116,7 +104,6 @@ void drm_sysfs_connector_remove(struct drm_connector *connector);
 void drm_sysfs_lease_event(struct drm_device *dev);
 
 /* drm_gem.c */
-struct drm_gem_object;
 int drm_gem_init(struct drm_device *dev);
 void drm_gem_destroy(struct drm_device *dev);
 int drm_gem_handle_create_tail(struct drm_file *file_priv,
@@ -133,21 +120,16 @@ void drm_gem_release(struct drm_device *dev, struct drm_file *file_private);
 void drm_gem_print_info(struct drm_printer *p, unsigned int indent,
 			const struct drm_gem_object *obj);
 
-int drm_gem_pin(struct drm_gem_object *obj);
-void drm_gem_unpin(struct drm_gem_object *obj);
-void *drm_gem_vmap(struct drm_gem_object *obj);
-void drm_gem_vunmap(struct drm_gem_object *obj, void *vaddr);
-
 /* drm_debugfs.c drm_debugfs_crc.c */
 #if defined(CONFIG_DEBUG_FS)
 int drm_debugfs_init(struct drm_minor *minor, int minor_id,
 		     struct dentry *root);
-void drm_debugfs_cleanup(struct drm_minor *minor);
-void drm_debugfs_connector_add(struct drm_connector *connector);
+int drm_debugfs_cleanup(struct drm_minor *minor);
+int drm_debugfs_connector_add(struct drm_connector *connector);
 void drm_debugfs_connector_remove(struct drm_connector *connector);
-void drm_debugfs_crtc_add(struct drm_crtc *crtc);
+int drm_debugfs_crtc_add(struct drm_crtc *crtc);
 void drm_debugfs_crtc_remove(struct drm_crtc *crtc);
-void drm_debugfs_crtc_crc_add(struct drm_crtc *crtc);
+int drm_debugfs_crtc_crc_add(struct drm_crtc *crtc);
 #else
 static inline int drm_debugfs_init(struct drm_minor *minor, int minor_id,
 				   struct dentry *root)
@@ -155,26 +137,30 @@ static inline int drm_debugfs_init(struct drm_minor *minor, int minor_id,
 	return 0;
 }
 
-static inline void drm_debugfs_cleanup(struct drm_minor *minor)
+static inline int drm_debugfs_cleanup(struct drm_minor *minor)
 {
+	return 0;
 }
 
-static inline void drm_debugfs_connector_add(struct drm_connector *connector)
+static inline int drm_debugfs_connector_add(struct drm_connector *connector)
 {
+	return 0;
 }
 static inline void drm_debugfs_connector_remove(struct drm_connector *connector)
 {
 }
 
-static inline void drm_debugfs_crtc_add(struct drm_crtc *crtc)
+static inline int drm_debugfs_crtc_add(struct drm_crtc *crtc)
 {
+	return 0;
 }
 static inline void drm_debugfs_crtc_remove(struct drm_crtc *crtc)
 {
 }
 
-static inline void drm_debugfs_crtc_crc_add(struct drm_crtc *crtc)
+static inline int drm_debugfs_crtc_crc_add(struct drm_crtc *crtc)
 {
+	return 0;
 }
 
 #endif
@@ -194,26 +180,14 @@ int drm_syncobj_handle_to_fd_ioctl(struct drm_device *dev, void *data,
 				   struct drm_file *file_private);
 int drm_syncobj_fd_to_handle_ioctl(struct drm_device *dev, void *data,
 				   struct drm_file *file_private);
-int drm_syncobj_transfer_ioctl(struct drm_device *dev, void *data,
-			       struct drm_file *file_private);
 int drm_syncobj_wait_ioctl(struct drm_device *dev, void *data,
 			   struct drm_file *file_private);
-int drm_syncobj_timeline_wait_ioctl(struct drm_device *dev, void *data,
-				    struct drm_file *file_private);
 int drm_syncobj_reset_ioctl(struct drm_device *dev, void *data,
 			    struct drm_file *file_private);
 int drm_syncobj_signal_ioctl(struct drm_device *dev, void *data,
 			     struct drm_file *file_private);
-int drm_syncobj_timeline_signal_ioctl(struct drm_device *dev, void *data,
-				      struct drm_file *file_private);
-int drm_syncobj_query_ioctl(struct drm_device *dev, void *data,
-			    struct drm_file *file_private);
 
 /* drm_framebuffer.c */
 void drm_framebuffer_print_info(struct drm_printer *p, unsigned int indent,
 				const struct drm_framebuffer *fb);
 int drm_framebuffer_debugfs_init(struct drm_minor *minor);
-
-/* drm_hdcp.c */
-int drm_setup_hdcp_srm(struct class *drm_class);
-void drm_teardown_hdcp_srm(struct class *drm_class);

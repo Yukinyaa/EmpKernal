@@ -1,9 +1,13 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  *	Linux ethernet bridge
  *
  *	Authors:
  *	Lennert Buytenhek		<buytenh@gnu.org>
+ *
+ *	This program is free software; you can redistribute it and/or
+ *	modify it under the terms of the GNU General Public License
+ *	as published by the Free Software Foundation; either version
+ *	2 of the License, or (at your option) any later version.
  */
 
 #ifndef _BR_PRIVATE_H
@@ -284,6 +288,8 @@ struct net_bridge_port {
 #define br_auto_port(p) ((p)->flags & BR_AUTO_MASK)
 #define br_promisc_port(p) ((p)->flags & BR_PROMISC)
 
+#define br_port_exists(dev) (dev->priv_flags & IFF_BRIDGE_PORT)
+
 static inline struct net_bridge_port *br_port_get_rcu(const struct net_device *dev)
 {
 	return rcu_dereference(dev->rx_handler_data);
@@ -291,13 +297,13 @@ static inline struct net_bridge_port *br_port_get_rcu(const struct net_device *d
 
 static inline struct net_bridge_port *br_port_get_rtnl(const struct net_device *dev)
 {
-	return netif_is_bridge_port(dev) ?
+	return br_port_exists(dev) ?
 		rtnl_dereference(dev->rx_handler_data) : NULL;
 }
 
 static inline struct net_bridge_port *br_port_get_rtnl_rcu(const struct net_device *dev)
 {
-	return netif_is_bridge_port(dev) ?
+	return br_port_exists(dev) ?
 		rcu_dereference_rtnl(dev->rx_handler_data) : NULL;
 }
 
@@ -317,7 +323,6 @@ enum net_bridge_opts {
 	BROPT_MTU_SET_BY_USER,
 	BROPT_VLAN_STATS_PER_PORT,
 	BROPT_NO_LL_LEARN,
-	BROPT_VLAN_BRIDGE_BINDING,
 };
 
 struct net_bridge {
@@ -421,18 +426,16 @@ struct net_bridge {
 struct br_input_skb_cb {
 	struct net_device *brdev;
 
-	u16 frag_max_size;
 #ifdef CONFIG_BRIDGE_IGMP_SNOOPING
-	u8 igmp;
-	u8 mrouters_only:1;
+	int igmp;
+	int mrouters_only;
 #endif
-	u8 proxyarp_replied:1;
-	u8 src_port_isolated:1;
+
+	bool proxyarp_replied;
+	bool src_port_isolated;
+
 #ifdef CONFIG_BRIDGE_VLAN_FILTERING
-	u8 vlan_filtered:1;
-#endif
-#ifdef CONFIG_NETFILTER_FAMILY_BRIDGE
-	u8 br_netfilter_broute:1;
+	bool vlan_filtered;
 #endif
 
 #ifdef CONFIG_NET_SWITCHDEV
@@ -893,9 +896,6 @@ int nbp_vlan_init(struct net_bridge_port *port, struct netlink_ext_ack *extack);
 int nbp_get_num_vlan_infos(struct net_bridge_port *p, u32 filter_mask);
 void br_vlan_get_stats(const struct net_bridge_vlan *v,
 		       struct br_vlan_stats *stats);
-void br_vlan_port_event(struct net_bridge_port *p, unsigned long event);
-int br_vlan_bridge_event(struct net_device *dev, unsigned long event,
-			 void *ptr);
 
 static inline struct net_bridge_vlan_group *br_vlan_group(
 					const struct net_bridge *br)
@@ -1078,17 +1078,6 @@ static inline struct net_bridge_vlan_group *nbp_vlan_group_rcu(
 static inline void br_vlan_get_stats(const struct net_bridge_vlan *v,
 				     struct br_vlan_stats *stats)
 {
-}
-
-static inline void br_vlan_port_event(struct net_bridge_port *p,
-				      unsigned long event)
-{
-}
-
-static inline int br_vlan_bridge_event(struct net_device *dev,
-				       unsigned long event, void *ptr)
-{
-	return 0;
 }
 #endif
 

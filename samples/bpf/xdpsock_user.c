@@ -27,8 +27,8 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "libbpf.h"
-#include "xsk.h"
+#include "bpf/libbpf.h"
+#include "bpf/xsk.h"
 #include <bpf/bpf.h>
 
 #ifndef SOL_XDP
@@ -68,7 +68,6 @@ static int opt_queue;
 static int opt_poll;
 static int opt_interval = 1;
 static u32 opt_xdp_bind_flags;
-static int opt_xsk_frame_size = XSK_UMEM__DEFAULT_FRAME_SIZE;
 static __u32 prog_id;
 
 struct xsk_umem_info {
@@ -277,12 +276,6 @@ static size_t gen_eth_frame(struct xsk_umem_info *umem, u64 addr)
 static struct xsk_umem_info *xsk_configure_umem(void *buffer, u64 size)
 {
 	struct xsk_umem_info *umem;
-	struct xsk_umem_config cfg = {
-		.fill_size = XSK_RING_PROD__DEFAULT_NUM_DESCS,
-		.comp_size = XSK_RING_CONS__DEFAULT_NUM_DESCS,
-		.frame_size = opt_xsk_frame_size,
-		.frame_headroom = XSK_UMEM__DEFAULT_FRAME_HEADROOM,
-	};
 	int ret;
 
 	umem = calloc(1, sizeof(*umem));
@@ -290,7 +283,7 @@ static struct xsk_umem_info *xsk_configure_umem(void *buffer, u64 size)
 		exit_with_error(errno);
 
 	ret = xsk_umem__create(&umem->umem, buffer, size, &umem->fq, &umem->cq,
-			       &cfg);
+			       NULL);
 	if (ret)
 		exit_with_error(-ret);
 
@@ -330,9 +323,11 @@ static struct xsk_socket_info *xsk_configure_socket(struct xsk_umem_info *umem)
 				     &idx);
 	if (ret != XSK_RING_PROD__DEFAULT_NUM_DESCS)
 		exit_with_error(-ret);
-	for (i = 0; i < XSK_RING_PROD__DEFAULT_NUM_DESCS; i++)
-		*xsk_ring_prod__fill_addr(&xsk->umem->fq, idx++) =
-			i * opt_xsk_frame_size;
+	for (i = 0;
+	     i < XSK_RING_PROD__DEFAULT_NUM_DESCS *
+		     XSK_UMEM__DEFAULT_FRAME_SIZE;
+	     i += XSK_UMEM__DEFAULT_FRAME_SIZE)
+		*xsk_ring_prod__fill_addr(&xsk->umem->fq, idx++) = i;
 	xsk_ring_prod__submit(&xsk->umem->fq,
 			      XSK_RING_PROD__DEFAULT_NUM_DESCS);
 
@@ -351,7 +346,6 @@ static struct option long_options[] = {
 	{"interval", required_argument, 0, 'n'},
 	{"zero-copy", no_argument, 0, 'z'},
 	{"copy", no_argument, 0, 'c'},
-	{"frame-size", required_argument, 0, 'f'},
 	{0, 0, 0, 0}
 };
 
@@ -371,9 +365,8 @@ static void usage(const char *prog)
 		"  -n, --interval=n	Specify statistics update interval (default 1 sec).\n"
 		"  -z, --zero-copy      Force zero-copy mode.\n"
 		"  -c, --copy           Force copy mode.\n"
-		"  -f, --frame-size=n   Set the frame size (must be a power of two, default is %d).\n"
 		"\n";
-	fprintf(stderr, str, prog, XSK_UMEM__DEFAULT_FRAME_SIZE);
+	fprintf(stderr, str, prog);
 	exit(EXIT_FAILURE);
 }
 
@@ -384,7 +377,7 @@ static void parse_command_line(int argc, char **argv)
 	opterr = 0;
 
 	for (;;) {
-		c = getopt_long(argc, argv, "Frtli:q:psSNn:czf:", long_options,
+		c = getopt_long(argc, argv, "Frtli:q:psSNn:cz", long_options,
 				&option_index);
 		if (c == -1)
 			break;
@@ -427,9 +420,6 @@ static void parse_command_line(int argc, char **argv)
 		case 'F':
 			opt_xdp_flags &= ~XDP_FLAGS_UPDATE_IF_NOEXIST;
 			break;
-		case 'f':
-			opt_xsk_frame_size = atoi(optarg);
-			break;
 		default:
 			usage(basename(argv[0]));
 		}
@@ -442,11 +432,6 @@ static void parse_command_line(int argc, char **argv)
 		usage(basename(argv[0]));
 	}
 
-	if (opt_xsk_frame_size & (opt_xsk_frame_size - 1)) {
-		fprintf(stderr, "--frame-size=%d is not a power of two\n",
-			opt_xsk_frame_size);
-		usage(basename(argv[0]));
-	}
 }
 
 static void kick_tx(struct xsk_socket_info *xsk)
@@ -598,7 +583,8 @@ static void tx_only(struct xsk_socket_info *xsk)
 
 			for (i = 0; i < BATCH_SIZE; i++) {
 				xsk_ring_prod__tx_desc(&xsk->tx, idx + i)->addr
-					= (frame_nb + i) * opt_xsk_frame_size;
+					= (frame_nb + i) <<
+					XSK_UMEM__DEFAULT_FRAME_SHIFT;
 				xsk_ring_prod__tx_desc(&xsk->tx, idx + i)->len =
 					sizeof(pkt_data) - 1;
 			}
@@ -675,19 +661,21 @@ int main(int argc, char **argv)
 	}
 
 	ret = posix_memalign(&bufs, getpagesize(), /* PAGE_SIZE aligned */
-			     NUM_FRAMES * opt_xsk_frame_size);
+			     NUM_FRAMES * XSK_UMEM__DEFAULT_FRAME_SIZE);
 	if (ret)
 		exit_with_error(ret);
 
        /* Create sockets... */
-	umem = xsk_configure_umem(bufs, NUM_FRAMES * opt_xsk_frame_size);
+	umem = xsk_configure_umem(bufs,
+				  NUM_FRAMES * XSK_UMEM__DEFAULT_FRAME_SIZE);
 	xsks[num_socks++] = xsk_configure_socket(umem);
 
 	if (opt_bench == BENCH_TXONLY) {
 		int i;
 
-		for (i = 0; i < NUM_FRAMES; i++)
-			(void)gen_eth_frame(umem, i * opt_xsk_frame_size);
+		for (i = 0; i < NUM_FRAMES * XSK_UMEM__DEFAULT_FRAME_SIZE;
+		     i += XSK_UMEM__DEFAULT_FRAME_SIZE)
+			(void)gen_eth_frame(umem, i);
 	}
 
 	signal(SIGINT, int_exit);

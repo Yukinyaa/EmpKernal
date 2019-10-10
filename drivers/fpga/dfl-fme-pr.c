@@ -74,7 +74,6 @@ static int fme_pr(struct platform_device *pdev, unsigned long arg)
 	struct dfl_fme *fme;
 	unsigned long minsz;
 	void *buf = NULL;
-	size_t length;
 	int ret = 0;
 	u64 v;
 
@@ -84,6 +83,9 @@ static int fme_pr(struct platform_device *pdev, unsigned long arg)
 		return -EFAULT;
 
 	if (port_pr.argsz < minsz || port_pr.flags)
+		return -EINVAL;
+
+	if (!IS_ALIGNED(port_pr.buffer_size, 4))
 		return -EINVAL;
 
 	/* get fme header region */
@@ -101,13 +103,7 @@ static int fme_pr(struct platform_device *pdev, unsigned long arg)
 		       port_pr.buffer_size))
 		return -EFAULT;
 
-	/*
-	 * align PR buffer per PR bandwidth, as HW ignores the extra padding
-	 * data automatically.
-	 */
-	length = ALIGN(port_pr.buffer_size, 4);
-
-	buf = vmalloc(length);
+	buf = vmalloc(port_pr.buffer_size);
 	if (!buf)
 		return -ENOMEM;
 
@@ -144,7 +140,7 @@ static int fme_pr(struct platform_device *pdev, unsigned long arg)
 	fpga_image_info_free(region->info);
 
 	info->buf = buf;
-	info->count = length;
+	info->count = port_pr.buffer_size;
 	info->region_id = port_pr.port_id;
 	region->info = info;
 
@@ -163,6 +159,9 @@ unlock_exit:
 	mutex_unlock(&pdata->lock);
 free_exit:
 	vfree(buf);
+	if (copy_to_user((void __user *)arg, &port_pr, minsz))
+		return -EFAULT;
+
 	return ret;
 }
 

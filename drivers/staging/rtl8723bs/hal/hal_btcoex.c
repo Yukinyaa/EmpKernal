@@ -75,7 +75,7 @@ static BTCDBGINFO GLBtcDbgInfo;
 
 static void DBG_BT_INFO_INIT(PBTCDBGINFO pinfo, u8 *pbuf, u32 size)
 {
-	if (!pinfo)
+	if (NULL == pinfo)
 		return;
 
 	memset(pinfo, 0, sizeof(BTCDBGINFO));
@@ -95,7 +95,7 @@ void DBG_BT_INFO(u8 *dbgmsg)
 
 	pinfo = &GLBtcDbgInfo;
 
-	if (!pinfo->info)
+	if (NULL == pinfo->info)
 		return;
 
 	msglen = strlen(dbgmsg);
@@ -112,9 +112,10 @@ void DBG_BT_INFO(u8 *dbgmsg)
 /*  */
 static u8 halbtcoutsrc_IsBtCoexistAvailable(PBTC_COEXIST pBtCoexist)
 {
-	if (!pBtCoexist->bBinded || !pBtCoexist->Adapter)
+	if (!pBtCoexist->bBinded ||
+		NULL == pBtCoexist->Adapter){
 		return false;
-
+	}
 	return true;
 }
 
@@ -195,6 +196,7 @@ static void halbtcoutsrc_NormalLps(PBTC_COEXIST pBtCoexist)
 static void halbtcoutsrc_LeaveLowPower(PBTC_COEXIST pBtCoexist)
 {
 	struct adapter *padapter;
+	struct hal_com_data *pHalData;
 	s32 ready;
 	unsigned long stime;
 	unsigned long utime;
@@ -202,6 +204,7 @@ static void halbtcoutsrc_LeaveLowPower(PBTC_COEXIST pBtCoexist)
 
 
 	padapter = pBtCoexist->Adapter;
+	pHalData = GET_HAL_DATA(padapter);
 	ready = _FAIL;
 #ifdef LPS_RPWM_WAIT_MS
 	timeout = LPS_RPWM_WAIT_MS;
@@ -254,11 +257,13 @@ static void halbtcoutsrc_AggregationCheck(PBTC_COEXIST pBtCoexist)
 	padapter = pBtCoexist->Adapter;
 	bNeedToAct = false;
 
-	if (pBtCoexist->btInfo.bRejectAggPkt) {
+	if (pBtCoexist->btInfo.bRejectAggPkt)
 		rtw_btcoex_RejectApAggregatedPacket(padapter, true);
-	} else {
+	else {
+
 		if (pBtCoexist->btInfo.bPreBtCtrlAggBufSize !=
-			pBtCoexist->btInfo.bBtCtrlAggBufSize) {
+			pBtCoexist->btInfo.bBtCtrlAggBufSize){
+
 			bNeedToAct = true;
 			pBtCoexist->btInfo.bPreBtCtrlAggBufSize = pBtCoexist->btInfo.bBtCtrlAggBufSize;
 		}
@@ -288,7 +293,7 @@ static u8 halbtcoutsrc_IsWifiBusy(struct adapter *padapter)
 	if (check_fwstate(pmlmepriv, WIFI_ASOC_STATE) == true) {
 		if (check_fwstate(pmlmepriv, WIFI_AP_STATE) == true)
 			return true;
-		if (pmlmepriv->LinkDetectInfo.bBusyTraffic)
+		if (true == pmlmepriv->LinkDetectInfo.bBusyTraffic)
 			return true;
 	}
 
@@ -308,12 +313,12 @@ static u32 _halbtcoutsrc_GetWifiLinkStatus(struct adapter *padapter)
 
 	if (check_fwstate(pmlmepriv, WIFI_ASOC_STATE) == true) {
 		if (check_fwstate(pmlmepriv, WIFI_AP_STATE) == true) {
-			if (bp2p)
+			if (true == bp2p)
 				portConnectedStatus |= WIFI_P2P_GO_CONNECTED;
 			else
 				portConnectedStatus |= WIFI_AP_CONNECTED;
 		} else {
-			if (bp2p)
+			if (true == bp2p)
 				portConnectedStatus |= WIFI_P2P_GC_CONNECTED;
 			else
 				portConnectedStatus |= WIFI_STA_CONNECTED;
@@ -358,9 +363,15 @@ static u32 halbtcoutsrc_GetBtPatchVer(PBTC_COEXIST pBtCoexist)
 
 static s32 halbtcoutsrc_GetWifiRssi(struct adapter *padapter)
 {
-	struct hal_com_data *pHalData = GET_HAL_DATA(padapter);
+	struct hal_com_data *pHalData;
+	s32 UndecoratedSmoothedPWDB = 0;
 
-	return pHalData->dmpriv.EntryMinUndecoratedSmoothedPWDB;
+
+	pHalData = GET_HAL_DATA(padapter);
+
+	UndecoratedSmoothedPWDB = pHalData->dmpriv.EntryMinUndecoratedSmoothedPWDB;
+
+	return UndecoratedSmoothedPWDB;
 }
 
 static u8 halbtcoutsrc_GetWifiScanAPNum(struct adapter *padapter)
@@ -370,7 +381,7 @@ static u8 halbtcoutsrc_GetWifiScanAPNum(struct adapter *padapter)
 
 	pmlmeext = &padapter->mlmeextpriv;
 
-	if (!GLBtcWiFiInScanState) {
+	if (GLBtcWiFiInScanState == false) {
 		if (pmlmeext->sitesurvey_res.bss_cnt > 0xFF)
 			scan_AP_num = 0xFF;
 		else
@@ -556,14 +567,18 @@ static u8 halbtcoutsrc_Set(void *pBtcContext, u8 setType, void *pInBuf)
 {
 	PBTC_COEXIST pBtCoexist;
 	struct adapter *padapter;
+	struct hal_com_data *pHalData;
 	u8 *pu8;
+	u8 *pU1Tmp;
 	u32 *pU4Tmp;
 	u8 ret;
 
 
 	pBtCoexist = (PBTC_COEXIST)pBtcContext;
 	padapter = pBtCoexist->Adapter;
+	pHalData = GET_HAL_DATA(padapter);
 	pu8 = pInBuf;
+	pU1Tmp = pInBuf;
 	pU4Tmp = pInBuf;
 	ret = true;
 
@@ -606,11 +621,11 @@ static u8 halbtcoutsrc_Set(void *pBtcContext, u8 setType, void *pInBuf)
 
 	/*  set some u8 type variables. */
 	case BTC_SET_U1_RSSI_ADJ_VAL_FOR_AGC_TABLE_ON:
-		pBtCoexist->btInfo.rssiAdjustForAgcTableOn = *pu8;
+		pBtCoexist->btInfo.rssiAdjustForAgcTableOn = *pU1Tmp;
 		break;
 
 	case BTC_SET_U1_AGG_BUF_SIZE:
-		pBtCoexist->btInfo.aggBufSize = *pu8;
+		pBtCoexist->btInfo.aggBufSize = *pU1Tmp;
 		break;
 
 	/*  the following are some action which will be triggered */
@@ -625,15 +640,15 @@ static u8 halbtcoutsrc_Set(void *pBtcContext, u8 setType, void *pInBuf)
 	/* 1Ant =========== */
 	/*  set some u8 type variables. */
 	case BTC_SET_U1_RSSI_ADJ_VAL_FOR_1ANT_COEX_TYPE:
-		pBtCoexist->btInfo.rssiAdjustFor1AntCoexType = *pu8;
+		pBtCoexist->btInfo.rssiAdjustFor1AntCoexType = *pU1Tmp;
 		break;
 
 	case BTC_SET_U1_LPS_VAL:
-		pBtCoexist->btInfo.lpsVal = *pu8;
+		pBtCoexist->btInfo.lpsVal = *pU1Tmp;
 		break;
 
 	case BTC_SET_U1_RPWM_VAL:
-		pBtCoexist->btInfo.rpwmVal = *pu8;
+		pBtCoexist->btInfo.rpwmVal = *pU1Tmp;
 		break;
 
 	/*  the following are some action which will be triggered */
@@ -808,10 +823,11 @@ static void halbtcoutsrc_WriteLocalReg1Byte(void *pBtcContext, u32 RegAddr, u8 D
 	PBTC_COEXIST		pBtCoexist = (PBTC_COEXIST)pBtcContext;
 	struct adapter *Adapter = pBtCoexist->Adapter;
 
-	if (BTC_INTF_SDIO == pBtCoexist->chipInterface)
+	if (BTC_INTF_SDIO == pBtCoexist->chipInterface) {
 		rtw_write8(Adapter, SDIO_LOCAL_BASE | RegAddr, Data);
-	else
+	} else {
 		rtw_write8(Adapter, RegAddr, Data);
+	}
 }
 
 static void halbtcoutsrc_SetBbReg(void *pBtcContext, u32 RegAddr, u32 BitMask, u32 Data)
@@ -1187,13 +1203,14 @@ void EXhalbtcoutsrc_SpecialPacketNotify(PBTC_COEXIST pBtCoexist, u8 pktType)
 	if (pBtCoexist->bManualControl)
 		return;
 
-	if (PACKET_DHCP == pktType) {
+	if (PACKET_DHCP == pktType)
 		packetType = BTC_PACKET_DHCP;
-	} else if (PACKET_EAPOL == pktType) {
+	else if (PACKET_EAPOL == pktType)
 		packetType = BTC_PACKET_EAPOL;
-	} else if (PACKET_ARP == pktType) {
+	else if (PACKET_ARP == pktType)
 		packetType = BTC_PACKET_ARP;
-	} else {
+	else {
+		packetType = BTC_PACKET_UNKNOWN;
 		return;
 	}
 
@@ -1346,7 +1363,7 @@ u8 hal_btcoex_IsBtExist(struct adapter *padapter)
 	return pHalData->bt_coexist.bBtExist;
 }
 
-bool hal_btcoex_IsBtDisabled(struct adapter *padapter)
+u8 hal_btcoex_IsBtDisabled(struct adapter *padapter)
 {
 	if (!hal_btcoex_IsBtExist(padapter))
 		return true;
@@ -1441,7 +1458,7 @@ void hal_btcoex_IQKNotify(struct adapter *padapter, u8 state)
 
 void hal_btcoex_BtInfoNotify(struct adapter *padapter, u8 length, u8 *tmpBuf)
 {
-	if (GLBtcWiFiInIQKState)
+	if (GLBtcWiFiInIQKState == true)
 		return;
 
 	EXhalbtcoutsrc_BtInfoNotify(&GLBtCoexist, tmpBuf, length);
@@ -1462,7 +1479,7 @@ void hal_btcoex_HaltNotify(struct adapter *padapter)
 	EXhalbtcoutsrc_HaltNotify(&GLBtCoexist);
 }
 
-void hal_btcoex_Handler(struct adapter *padapter)
+void hal_btcoex_Hanlder(struct adapter *padapter)
 {
 	EXhalbtcoutsrc_Periodical(&GLBtCoexist);
 }
@@ -1554,7 +1571,7 @@ void hal_btcoex_SetDBG(struct adapter *padapter, u32 *pDbgModule)
 	u32 i;
 
 
-	if (!pDbgModule)
+	if (NULL == pDbgModule)
 		return;
 
 	for (i = 0; i < BTC_MSG_MAX; i++)
@@ -1568,7 +1585,7 @@ u32 hal_btcoex_GetDBG(struct adapter *padapter, u8 *pStrBuf, u32 bufSize)
 	u32 leftSize;
 
 
-	if (!pStrBuf || bufSize == 0)
+	if ((NULL == pStrBuf) || (0 == bufSize))
 		return 0;
 
 	pstr = pStrBuf;

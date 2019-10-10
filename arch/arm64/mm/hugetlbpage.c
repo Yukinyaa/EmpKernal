@@ -1,10 +1,18 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * arch/arm64/mm/hugetlbpage.c
  *
  * Copyright (C) 2013 Linaro Ltd.
  *
  * Based on arch/x86/mm/hugetlbpage.c.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/init.h>
@@ -228,7 +236,7 @@ pte_t *huge_pte_alloc(struct mm_struct *mm,
 
 	if (sz == PUD_SIZE) {
 		ptep = (pte_t *)pudp;
-	} else if (sz == (CONT_PTE_SIZE)) {
+	} else if (sz == (PAGE_SIZE * CONT_PTES)) {
 		pmdp = pmd_alloc(mm, pudp, addr);
 
 		WARN_ON(addr & (sz - 1));
@@ -246,7 +254,7 @@ pte_t *huge_pte_alloc(struct mm_struct *mm,
 			ptep = huge_pmd_share(mm, addr, pudp);
 		else
 			ptep = (pte_t *)pmd_alloc(mm, pudp, addr);
-	} else if (sz == (CONT_PMD_SIZE)) {
+	} else if (sz == (PMD_SIZE * CONT_PMDS)) {
 		pmdp = pmd_alloc(mm, pudp, addr);
 		WARN_ON(addr & (sz - 1));
 		return (pte_t *)pmdp;
@@ -454,9 +462,9 @@ static int __init hugetlbpage_init(void)
 #ifdef CONFIG_ARM64_4K_PAGES
 	add_huge_page_size(PUD_SIZE);
 #endif
-	add_huge_page_size(CONT_PMD_SIZE);
+	add_huge_page_size(PMD_SIZE * CONT_PMDS);
 	add_huge_page_size(PMD_SIZE);
-	add_huge_page_size(CONT_PTE_SIZE);
+	add_huge_page_size(PAGE_SIZE * CONT_PTES);
 
 	return 0;
 }
@@ -470,9 +478,9 @@ static __init int setup_hugepagesz(char *opt)
 #ifdef CONFIG_ARM64_4K_PAGES
 	case PUD_SIZE:
 #endif
-	case CONT_PMD_SIZE:
+	case PMD_SIZE * CONT_PMDS:
 	case PMD_SIZE:
-	case CONT_PTE_SIZE:
+	case PAGE_SIZE * CONT_PTES:
 		add_huge_page_size(ps);
 		return 1;
 	}

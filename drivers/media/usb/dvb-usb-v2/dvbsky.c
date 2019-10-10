@@ -1,8 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Driver for DVBSky USB2.0 receiver
  *
  * Copyright (C) 2013 Max nibble <nibble.max@gmail.com>
+ *
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License as published by
+ *    the Free Software Foundation; either version 2 of the License, or
+ *    (at your option) any later version.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
  */
 
 #include "dvb_usb.h"
@@ -91,6 +100,8 @@ static int dvbsky_gpio_ctrl(struct dvb_usb_device *d, u8 gport, u8 value)
 	obuf[1] = gport;
 	obuf[2] = value;
 	ret = dvbsky_usb_generic_rw(d, obuf, 3, ibuf, 1);
+	if (ret)
+		dev_err(&d->udev->dev, "failed=%d\n", ret);
 	return ret;
 }
 
@@ -128,6 +139,8 @@ static int dvbsky_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msg[],
 			obuf[3] = msg[0].addr;
 			ret = dvbsky_usb_generic_rw(d, obuf, 4,
 					ibuf, msg[0].len + 1);
+			if (ret)
+				dev_err(&d->udev->dev, "failed=%d\n", ret);
 			if (!ret)
 				memcpy(msg[0].buf, &ibuf[1], msg[0].len);
 		} else {
@@ -138,6 +151,8 @@ static int dvbsky_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msg[],
 			memcpy(&obuf[3], msg[0].buf, msg[0].len);
 			ret = dvbsky_usb_generic_rw(d, obuf,
 					msg[0].len + 3, ibuf, 1);
+			if (ret)
+				dev_err(&d->udev->dev, "failed=%d\n", ret);
 		}
 	} else {
 		if ((msg[0].len > 60) || (msg[1].len > 60)) {
@@ -155,6 +170,9 @@ static int dvbsky_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msg[],
 		memcpy(&obuf[4], msg[0].buf, msg[0].len);
 		ret = dvbsky_usb_generic_rw(d, obuf,
 			msg[0].len + 4, ibuf, msg[1].len + 1);
+		if (ret)
+			dev_err(&d->udev->dev, "failed=%d\n", ret);
+
 		if (!ret)
 			memcpy(msg[1].buf, &ibuf[1], msg[1].len);
 	}
@@ -183,6 +201,8 @@ static int dvbsky_rc_query(struct dvb_usb_device *d)
 
 	obuf[0] = 0x10;
 	ret = dvbsky_usb_generic_rw(d, obuf, 1, ibuf, 2);
+	if (ret)
+		dev_err(&d->udev->dev, "failed=%d\n", ret);
 	if (ret == 0)
 		code = (ibuf[0] << 8) | ibuf[1];
 	if (code != 0xffff) {
@@ -595,18 +615,16 @@ static int dvbsky_init(struct dvb_usb_device *d)
 	return 0;
 }
 
-static int dvbsky_frontend_detach(struct dvb_usb_adapter *adap)
+static void dvbsky_exit(struct dvb_usb_device *d)
 {
-	struct dvb_usb_device *d = adap_to_d(adap);
 	struct dvbsky_state *state = d_to_priv(d);
-
-	dev_dbg(&d->udev->dev, "%s: adap=%d\n", __func__, adap->id);
+	struct dvb_usb_adapter *adap = &d->adapter[0];
 
 	dvb_module_release(state->i2c_client_tuner);
 	dvb_module_release(state->i2c_client_demod);
 	dvb_module_release(state->i2c_client_ci);
 
-	return 0;
+	adap->fe[0] = NULL;
 }
 
 /* DVB USB Driver stuff */
@@ -622,11 +640,11 @@ static struct dvb_usb_device_properties dvbsky_s960_props = {
 
 	.i2c_algo         = &dvbsky_i2c_algo,
 	.frontend_attach  = dvbsky_s960_attach,
-	.frontend_detach  = dvbsky_frontend_detach,
 	.init             = dvbsky_init,
 	.get_rc_config    = dvbsky_get_rc_config,
 	.streaming_ctrl   = dvbsky_streaming_ctrl,
 	.identify_state	  = dvbsky_identify_state,
+	.exit             = dvbsky_exit,
 	.read_mac_address = dvbsky_read_mac_addr,
 
 	.num_adapters = 1,
@@ -649,11 +667,11 @@ static struct dvb_usb_device_properties dvbsky_s960c_props = {
 
 	.i2c_algo         = &dvbsky_i2c_algo,
 	.frontend_attach  = dvbsky_s960c_attach,
-	.frontend_detach  = dvbsky_frontend_detach,
 	.init             = dvbsky_init,
 	.get_rc_config    = dvbsky_get_rc_config,
 	.streaming_ctrl   = dvbsky_streaming_ctrl,
 	.identify_state	  = dvbsky_identify_state,
+	.exit             = dvbsky_exit,
 	.read_mac_address = dvbsky_read_mac_addr,
 
 	.num_adapters = 1,
@@ -676,11 +694,11 @@ static struct dvb_usb_device_properties dvbsky_t680c_props = {
 
 	.i2c_algo         = &dvbsky_i2c_algo,
 	.frontend_attach  = dvbsky_t680c_attach,
-	.frontend_detach  = dvbsky_frontend_detach,
 	.init             = dvbsky_init,
 	.get_rc_config    = dvbsky_get_rc_config,
 	.streaming_ctrl   = dvbsky_streaming_ctrl,
 	.identify_state	  = dvbsky_identify_state,
+	.exit             = dvbsky_exit,
 	.read_mac_address = dvbsky_read_mac_addr,
 
 	.num_adapters = 1,
@@ -703,11 +721,11 @@ static struct dvb_usb_device_properties dvbsky_t330_props = {
 
 	.i2c_algo         = &dvbsky_i2c_algo,
 	.frontend_attach  = dvbsky_t330_attach,
-	.frontend_detach  = dvbsky_frontend_detach,
 	.init             = dvbsky_init,
 	.get_rc_config    = dvbsky_get_rc_config,
 	.streaming_ctrl   = dvbsky_streaming_ctrl,
 	.identify_state	  = dvbsky_identify_state,
+	.exit             = dvbsky_exit,
 	.read_mac_address = dvbsky_read_mac_addr,
 
 	.num_adapters = 1,
@@ -730,11 +748,11 @@ static struct dvb_usb_device_properties mygica_t230c_props = {
 
 	.i2c_algo         = &dvbsky_i2c_algo,
 	.frontend_attach  = dvbsky_mygica_t230c_attach,
-	.frontend_detach  = dvbsky_frontend_detach,
 	.init             = dvbsky_init,
 	.get_rc_config    = dvbsky_get_rc_config,
 	.streaming_ctrl   = dvbsky_streaming_ctrl,
 	.identify_state	  = dvbsky_identify_state,
+	.exit             = dvbsky_exit,
 
 	.num_adapters = 1,
 	.adapter = {

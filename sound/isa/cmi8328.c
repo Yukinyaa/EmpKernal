@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Driver for C-Media CMI8328-based soundcards, such as AudioExcel AV500
  * Copyright (c) 2012 Ondrej Zary

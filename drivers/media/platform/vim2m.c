@@ -302,7 +302,7 @@ static void copy_two_pixels(struct vim2m_q_data *q_data_in,
 	switch (in->fourcc) {
 	case V4L2_PIX_FMT_RGB565: /* rrrrrggg gggbbbbb */
 		for (i = 0; i < 2; i++) {
-			u16 pix = le16_to_cpu(*(__le16 *)(src[i]));
+			u16 pix = *(u16 *)(src[i]);
 
 			*r++ = (u8)(((pix & 0xf800) >> 11) << 3) | 0x07;
 			*g++ = (u8)((((pix & 0x07e0) >> 5)) << 2) | 0x03;
@@ -311,11 +311,12 @@ static void copy_two_pixels(struct vim2m_q_data *q_data_in,
 		break;
 	case V4L2_PIX_FMT_RGB565X: /* gggbbbbb rrrrrggg */
 		for (i = 0; i < 2; i++) {
-			u16 pix = be16_to_cpu(*(__be16 *)(src[i]));
+			u16 pix = *(u16 *)(src[i]);
 
-			*r++ = (u8)(((pix & 0xf800) >> 11) << 3) | 0x07;
-			*g++ = (u8)((((pix & 0x07e0) >> 5)) << 2) | 0x03;
-			*b++ = (u8)((pix & 0x1f) << 3) | 0x07;
+			*r++ = (u8)(((0x00f8 & pix) >> 3) << 3) | 0x07;
+			*g++ = (u8)(((pix & 0x7) << 2) |
+				    ((pix & 0xe000) >> 5)) | 0x03;
+			*b++ = (u8)(((pix & 0x1f00) >> 8) << 3) | 0x07;
 		}
 		break;
 	default:
@@ -344,26 +345,21 @@ static void copy_two_pixels(struct vim2m_q_data *q_data_in,
 	switch (out->fourcc) {
 	case V4L2_PIX_FMT_RGB565: /* rrrrrggg gggbbbbb */
 		for (i = 0; i < 2; i++) {
-			u16 pix;
-			__le16 *dst_pix = (__le16 *)*dst;
+			u16 *pix = (u16 *)*dst;
 
-			pix = ((*r << 8) & 0xf800) | ((*g << 3) & 0x07e0) |
-			      (*b >> 3);
-
-			*dst_pix = cpu_to_le16(pix);
+			*pix = ((*r << 8) & 0xf800) | ((*g << 3) & 0x07e0) |
+			       (*b >> 3);
 
 			*dst += 2;
 		}
 		return;
 	case V4L2_PIX_FMT_RGB565X: /* gggbbbbb rrrrrggg */
 		for (i = 0; i < 2; i++) {
-			u16 pix;
-			__be16 *dst_pix = (__be16 *)*dst;
+			u16 *pix = (u16 *)*dst;
+			u8 green = *g++ >> 2;
 
-			pix = ((*r << 8) & 0xf800) | ((*g << 3) & 0x07e0) |
-			      (*b >> 3);
-
-			*dst_pix = cpu_to_be16(pix);
+			*pix = ((green << 8) & 0xe000) | (green & 0x07) |
+			       ((*b++ << 5) & 0x1f00) | ((*r++ & 0xf8));
 
 			*dst += 2;
 		}
@@ -659,8 +655,8 @@ static void device_work(struct work_struct *w)
 static int vidioc_querycap(struct file *file, void *priv,
 			   struct v4l2_capability *cap)
 {
-	strscpy(cap->driver, MEM2MEM_NAME, sizeof(cap->driver));
-	strscpy(cap->card, MEM2MEM_NAME, sizeof(cap->card));
+	strncpy(cap->driver, MEM2MEM_NAME, sizeof(cap->driver) - 1);
+	strncpy(cap->card, MEM2MEM_NAME, sizeof(cap->card) - 1);
 	snprintf(cap->bus_info, sizeof(cap->bus_info),
 		 "platform:%s", MEM2MEM_NAME);
 	return 0;
@@ -1266,15 +1262,6 @@ static int vim2m_release(struct file *file)
 	return 0;
 }
 
-static void vim2m_device_release(struct video_device *vdev)
-{
-	struct vim2m_dev *dev = container_of(vdev, struct vim2m_dev, vfd);
-
-	v4l2_device_unregister(&dev->v4l2_dev);
-	v4l2_m2m_release(dev->m2m_dev);
-	kfree(dev);
-}
-
 static const struct v4l2_file_operations vim2m_fops = {
 	.owner		= THIS_MODULE,
 	.open		= vim2m_open,
@@ -1290,7 +1277,7 @@ static const struct video_device vim2m_videodev = {
 	.fops		= &vim2m_fops,
 	.ioctl_ops	= &vim2m_ioctl_ops,
 	.minor		= -1,
-	.release	= vim2m_device_release,
+	.release	= video_device_release_empty,
 	.device_caps	= V4L2_CAP_VIDEO_M2M | V4L2_CAP_STREAMING,
 };
 
@@ -1311,13 +1298,13 @@ static int vim2m_probe(struct platform_device *pdev)
 	struct video_device *vfd;
 	int ret;
 
-	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
+	dev = devm_kzalloc(&pdev->dev, sizeof(*dev), GFP_KERNEL);
 	if (!dev)
 		return -ENOMEM;
 
 	ret = v4l2_device_register(&pdev->dev, &dev->v4l2_dev);
 	if (ret)
-		goto error_free;
+		return ret;
 
 	atomic_set(&dev->num_inst, 0);
 	mutex_init(&dev->dev_mutex);
@@ -1330,7 +1317,7 @@ static int vim2m_probe(struct platform_device *pdev)
 	ret = video_register_device(vfd, VFL_TYPE_GRABBER, 0);
 	if (ret) {
 		v4l2_err(&dev->v4l2_dev, "Failed to register video device\n");
-		goto error_v4l2;
+		goto unreg_v4l2;
 	}
 
 	video_set_drvdata(vfd, dev);
@@ -1343,7 +1330,7 @@ static int vim2m_probe(struct platform_device *pdev)
 	if (IS_ERR(dev->m2m_dev)) {
 		v4l2_err(&dev->v4l2_dev, "Failed to init mem2mem device\n");
 		ret = PTR_ERR(dev->m2m_dev);
-		goto error_dev;
+		goto unreg_dev;
 	}
 
 #ifdef CONFIG_MEDIA_CONTROLLER
@@ -1359,29 +1346,27 @@ static int vim2m_probe(struct platform_device *pdev)
 						 MEDIA_ENT_F_PROC_VIDEO_SCALER);
 	if (ret) {
 		v4l2_err(&dev->v4l2_dev, "Failed to init mem2mem media controller\n");
-		goto error_dev;
+		goto unreg_m2m;
 	}
 
 	ret = media_device_register(&dev->mdev);
 	if (ret) {
 		v4l2_err(&dev->v4l2_dev, "Failed to register mem2mem media device\n");
-		goto error_m2m_mc;
+		goto unreg_m2m_mc;
 	}
 #endif
 	return 0;
 
 #ifdef CONFIG_MEDIA_CONTROLLER
-error_m2m_mc:
+unreg_m2m_mc:
 	v4l2_m2m_unregister_media_controller(dev->m2m_dev);
+unreg_m2m:
+	v4l2_m2m_release(dev->m2m_dev);
 #endif
-error_dev:
+unreg_dev:
 	video_unregister_device(&dev->vfd);
-	/* vim2m_device_release called by video_unregister_device to release various objects */
-	return ret;
-error_v4l2:
+unreg_v4l2:
 	v4l2_device_unregister(&dev->v4l2_dev);
-error_free:
-	kfree(dev);
 
 	return ret;
 }
@@ -1397,7 +1382,9 @@ static int vim2m_remove(struct platform_device *pdev)
 	v4l2_m2m_unregister_media_controller(dev->m2m_dev);
 	media_device_cleanup(&dev->mdev);
 #endif
+	v4l2_m2m_release(dev->m2m_dev);
 	video_unregister_device(&dev->vfd);
+	v4l2_device_unregister(&dev->v4l2_dev);
 
 	return 0;
 }

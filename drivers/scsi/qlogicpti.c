@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /* qlogicpti.c: Performance Technologies QlogicISP sbus card driver.
  *
  * Copyright (C) 1996, 2006, 2008 David S. Miller (davem@davemloft.net)

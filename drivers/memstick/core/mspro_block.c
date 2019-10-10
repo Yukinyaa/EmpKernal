@@ -1,11 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  Sony MemoryStick Pro storage support
  *
  *  Copyright (C) 2007 Alex Dubov <oakad@yahoo.com>
  *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
  * Special thanks to Carlos Corbacho for providing various MemoryStick cards
  * that made this driver possible.
+ *
  */
 
 #include <linux/blk-mq.h>
@@ -690,13 +694,13 @@ static void h_mspro_block_setup_cmd(struct memstick_dev *card, u64 offset,
 
 /*** Data transfer ***/
 
-static int mspro_block_issue_req(struct memstick_dev *card)
+static int mspro_block_issue_req(struct memstick_dev *card, bool chunk)
 {
 	struct mspro_block_data *msb = memstick_get_drvdata(card);
 	u64 t_off;
 	unsigned int count;
 
-	while (true) {
+	while (chunk) {
 		msb->current_page = 0;
 		msb->current_seg = 0;
 		msb->seg_count = blk_rq_map_sg(msb->block_req->q,
@@ -705,7 +709,6 @@ static int mspro_block_issue_req(struct memstick_dev *card)
 
 		if (!msb->seg_count) {
 			unsigned int bytes = blk_rq_cur_bytes(msb->block_req);
-			bool chunk;
 
 			chunk = blk_update_request(msb->block_req,
 							BLK_STS_RESOURCE,
@@ -715,7 +718,7 @@ static int mspro_block_issue_req(struct memstick_dev *card)
 			__blk_mq_end_request(msb->block_req,
 						BLK_STS_RESOURCE);
 			msb->block_req = NULL;
-			return -EAGAIN;
+			break;
 		}
 
 		t_off = blk_rq_pos(msb->block_req);
@@ -732,6 +735,8 @@ static int mspro_block_issue_req(struct memstick_dev *card)
 		memstick_new_req(card->host);
 		return 0;
 	}
+
+	return 1;
 }
 
 static int mspro_block_complete_req(struct memstick_dev *card, int error)
@@ -774,7 +779,7 @@ static int mspro_block_complete_req(struct memstick_dev *card, int error)
 		chunk = blk_update_request(msb->block_req,
 				errno_to_blk_status(error), t_len);
 		if (chunk) {
-			error = mspro_block_issue_req(card);
+			error = mspro_block_issue_req(card, chunk);
 			if (!error)
 				goto out;
 		} else {
@@ -844,7 +849,7 @@ static blk_status_t mspro_queue_rq(struct blk_mq_hw_ctx *hctx,
 	msb->block_req = bd->rq;
 	blk_mq_start_request(bd->rq);
 
-	if (mspro_block_issue_req(card))
+	if (mspro_block_issue_req(card, true))
 		msb->block_req = NULL;
 
 	spin_unlock_irq(&msb->q_lock);

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * kernel/stop_machine.c
  *
@@ -6,6 +5,8 @@
  * Copyright (C) 2008, 2005	Rusty Russell rusty@rustcorp.com.au
  * Copyright (C) 2010		SUSE Linux Products GmbH
  * Copyright (C) 2010		Tejun Heo <tj@kernel.org>
+ *
+ * This file is released under the GPLv2 and any later version.
  */
 #include <linux/completion.h>
 #include <linux/cpu.h>
@@ -177,18 +178,12 @@ static void ack_state(struct multi_stop_data *msdata)
 		set_state(msdata, msdata->state + 1);
 }
 
-void __weak stop_machine_yield(const struct cpumask *cpumask)
-{
-	cpu_relax();
-}
-
 /* This is the cpu_stop function which stops the CPU. */
 static int multi_cpu_stop(void *data)
 {
 	struct multi_stop_data *msdata = data;
 	enum multi_stop_state curstate = MULTI_STOP_NONE;
 	int cpu = smp_processor_id(), err = 0;
-	const struct cpumask *cpumask;
 	unsigned long flags;
 	bool is_active;
 
@@ -198,18 +193,15 @@ static int multi_cpu_stop(void *data)
 	 */
 	local_save_flags(flags);
 
-	if (!msdata->active_cpus) {
-		cpumask = cpu_online_mask;
-		is_active = cpu == cpumask_first(cpumask);
-	} else {
-		cpumask = msdata->active_cpus;
-		is_active = cpumask_test_cpu(cpu, cpumask);
-	}
+	if (!msdata->active_cpus)
+		is_active = cpu == cpumask_first(cpu_online_mask);
+	else
+		is_active = cpumask_test_cpu(cpu, msdata->active_cpus);
 
 	/* Simple state machine */
 	do {
 		/* Chill out and ensure we re-read multi_stop_state. */
-		stop_machine_yield(cpumask);
+		cpu_relax_yield();
 		if (msdata->state != curstate) {
 			curstate = msdata->state;
 			switch (curstate) {
@@ -521,7 +513,7 @@ repeat:
 		}
 		preempt_count_dec();
 		WARN_ONCE(preempt_count(),
-			  "cpu_stop: %ps(%p) leaked preempt count\n", fn, arg);
+			  "cpu_stop: %pf(%p) leaked preempt count\n", fn, arg);
 		goto repeat;
 	}
 }

@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: ISC
 config ATH_COMMON
 	tristate
 

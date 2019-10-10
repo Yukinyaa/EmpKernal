@@ -17,6 +17,7 @@
  *  epoll ... Event poll performance
  */
 #include "perf.h"
+#include "util/util.h"
 #include <subcmd/parse-options.h>
 #include "builtin.h"
 #include "bench/bench.h"
@@ -25,7 +26,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
-#include <linux/zalloc.h>
 
 typedef int (*bench_fn_t)(int argc, const char **argv);
 

@@ -360,6 +360,9 @@ static inline unsigned find_get_pages_tag(struct address_space *mapping,
 	return find_get_pages_range_tag(mapping, index, (pgoff_t)-1, tag,
 					nr_pages, pages);
 }
+unsigned find_get_entries_tag(struct address_space *mapping, pgoff_t start,
+			xa_mark_t tag, unsigned int nr_entries,
+			struct page **entries, pgoff_t *indices);
 
 struct page *grab_cache_page_write_begin(struct address_space *mapping,
 			pgoff_t index, unsigned flags);
@@ -383,7 +386,8 @@ extern int read_cache_pages(struct address_space *mapping,
 static inline struct page *read_mapping_page(struct address_space *mapping,
 				pgoff_t index, void *data)
 {
-	return read_cache_page(mapping, index, NULL, data);
+	filler_t *filler = (filler_t *)mapping->a_ops->readpage;
+	return read_cache_page(mapping, index, filler, data);
 }
 
 /*
@@ -451,9 +455,6 @@ extern int __lock_page_or_retry(struct page *page, struct mm_struct *mm,
 				unsigned int flags);
 extern void unlock_page(struct page *page);
 
-/*
- * Return true if the page was successfully locked
- */
 static inline int trylock_page(struct page *page)
 {
 	page = compound_head(page);
@@ -526,7 +527,15 @@ static inline int wait_on_page_locked_killable(struct page *page)
 
 extern void put_and_wait_on_page_locked(struct page *page);
 
-void wait_on_page_writeback(struct page *page);
+/* 
+ * Wait for a page to complete writeback
+ */
+static inline void wait_on_page_writeback(struct page *page)
+{
+	if (PageWriteback(page))
+		wait_on_page_bit(page, PG_writeback);
+}
+
 extern void end_page_writeback(struct page *page);
 void wait_for_stable_page(struct page *page);
 

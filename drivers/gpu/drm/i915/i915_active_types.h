@@ -7,7 +7,6 @@
 #ifndef _I915_ACTIVE_TYPES_H_
 #define _I915_ACTIVE_TYPES_H_
 
-#include <linux/llist.h>
 #include <linux/rbtree.h>
 #include <linux/rcupdate.h>
 
@@ -32,8 +31,6 @@ struct i915_active {
 	unsigned int count;
 
 	void (*retire)(struct i915_active *ref);
-
-	struct llist_head barriers;
 };
 
 #endif /* _I915_ACTIVE_TYPES_H_ */

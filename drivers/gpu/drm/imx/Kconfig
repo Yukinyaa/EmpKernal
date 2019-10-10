@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-only
 config DRM_IMX
 	tristate "DRM Support for Freescale i.MX"
 	select DRM_KMS_HELPER

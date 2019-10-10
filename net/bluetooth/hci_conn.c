@@ -520,9 +520,6 @@ struct hci_conn *hci_conn_add(struct hci_dev *hdev, int type, bdaddr_t *dst,
 	set_bit(HCI_CONN_POWER_SAVE, &conn->flags);
 	conn->disc_timeout = HCI_DISCONN_TIMEOUT;
 
-	/* Set Default Authenticated payload timeout to 30s */
-	conn->auth_payload_timeout = DEFAULT_AUTH_PAYLOAD_TIMEOUT;
-
 	if (conn->role == HCI_ROLE_MASTER)
 		conn->out = true;
 
@@ -915,7 +912,7 @@ static void hci_req_directed_advertising(struct hci_request *req,
 				    sizeof(cp), &cp);
 		}
 
-		__hci_req_enable_ext_advertising(req, 0x00);
+		__hci_req_enable_ext_advertising(req);
 	} else {
 		struct hci_cp_le_set_adv_param cp;
 
@@ -1279,6 +1276,14 @@ int hci_conn_check_link_mode(struct hci_conn *conn)
 	    !test_bit(HCI_CONN_ENCRYPT, &conn->flags))
 		return 0;
 
+	/* The minimum encryption key size needs to be enforced by the
+	 * host stack before establishing any L2CAP connections. The
+	 * specification in theory allows a minimum of 1, but to align
+	 * BR/EDR and LE transports, a minimum of 7 is chosen.
+	 */
+	if (conn->enc_key_size < HCI_MIN_ENC_KEY_SIZE)
+		return 0;
+
 	return 1;
 }
 
@@ -1395,16 +1400,8 @@ auth:
 		return 0;
 
 encrypt:
-	if (test_bit(HCI_CONN_ENCRYPT, &conn->flags)) {
-		/* Ensure that the encryption key size has been read,
-		 * otherwise stall the upper layer responses.
-		 */
-		if (!conn->enc_key_size)
-			return 0;
-
-		/* Nothing else needed, all requirements are met */
+	if (test_bit(HCI_CONN_ENCRYPT, &conn->flags))
 		return 1;
-	}
 
 	hci_conn_encrypt(conn);
 	return 0;

@@ -28,8 +28,7 @@
 #include "genelf.h"
 #include "../builtin.h"
 
-#include <linux/ctype.h>
-#include <linux/zalloc.h>
+#include "sane_ctype.h"
 
 struct jit_buf_desc {
 	struct perf_data *output;
@@ -432,12 +431,14 @@ static int jit_repipe_code_load(struct jit_buf_desc *jd, union jr_entry *jr)
 			   jd->unwinding_data, jd->eh_frame_hdr_size, jd->unwinding_size);
 
 	if (jd->debug_data && jd->nr_debug_entries) {
-		zfree(&jd->debug_data);
+		free(jd->debug_data);
+		jd->debug_data = NULL;
 		jd->nr_debug_entries = 0;
 	}
 
 	if (jd->unwinding_data && jd->eh_frame_hdr_size) {
-		zfree(&jd->unwinding_data);
+		free(jd->unwinding_data);
+		jd->unwinding_data = NULL;
 		jd->eh_frame_hdr_size = 0;
 		jd->unwinding_mapped_size = 0;
 		jd->unwinding_size = 0;

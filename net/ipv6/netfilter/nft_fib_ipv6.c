@@ -1,4 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
 
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -165,7 +169,8 @@ void nft_fib6_eval(const struct nft_expr *expr, struct nft_regs *regs,
 
 	if (nft_hook(pkt) == NF_INET_PRE_ROUTING &&
 	    nft_fib_is_loopback(pkt->skb, nft_in(pkt))) {
-		nft_fib_store_result(dest, priv, nft_in(pkt));
+		nft_fib_store_result(dest, priv, pkt,
+				     nft_in(pkt)->ifindex);
 		return;
 	}
 
@@ -182,7 +187,18 @@ void nft_fib6_eval(const struct nft_expr *expr, struct nft_regs *regs,
 	if (oif && oif != rt->rt6i_idev->dev)
 		goto put_rt_err;
 
-	nft_fib_store_result(dest, priv, rt->rt6i_idev->dev);
+	switch (priv->result) {
+	case NFT_FIB_RESULT_OIF:
+		*dest = rt->rt6i_idev->dev->ifindex;
+		break;
+	case NFT_FIB_RESULT_OIFNAME:
+		strncpy((char *)dest, rt->rt6i_idev->dev->name, IFNAMSIZ);
+		break;
+	default:
+		WARN_ON_ONCE(1);
+		break;
+	}
+
  put_rt_err:
 	ip6_rt_put(rt);
 }

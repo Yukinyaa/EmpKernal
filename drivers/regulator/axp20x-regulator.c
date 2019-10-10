@@ -174,14 +174,14 @@
 #define AXP803_DCDC5_1140mV_STEPS	35
 #define AXP803_DCDC5_1140mV_END		\
 	(AXP803_DCDC5_1140mV_START + AXP803_DCDC5_1140mV_STEPS)
-#define AXP803_DCDC5_NUM_VOLTAGES	69
+#define AXP803_DCDC5_NUM_VOLTAGES	68
 
 #define AXP803_DCDC6_600mV_START	0x00
 #define AXP803_DCDC6_600mV_STEPS	50
 #define AXP803_DCDC6_600mV_END		\
 	(AXP803_DCDC6_600mV_START + AXP803_DCDC6_600mV_STEPS)
 #define AXP803_DCDC6_1120mV_START	0x33
-#define AXP803_DCDC6_1120mV_STEPS	20
+#define AXP803_DCDC6_1120mV_STEPS	14
 #define AXP803_DCDC6_1120mV_END		\
 	(AXP803_DCDC6_1120mV_START + AXP803_DCDC6_1120mV_STEPS)
 #define AXP803_DCDC6_NUM_VOLTAGES	72
@@ -240,7 +240,7 @@
 #define AXP806_DCDCA_600mV_END		\
 	(AXP806_DCDCA_600mV_START + AXP806_DCDCA_600mV_STEPS)
 #define AXP806_DCDCA_1120mV_START	0x33
-#define AXP806_DCDCA_1120mV_STEPS	20
+#define AXP806_DCDCA_1120mV_STEPS	14
 #define AXP806_DCDCA_1120mV_END		\
 	(AXP806_DCDCA_1120mV_START + AXP806_DCDCA_1120mV_STEPS)
 #define AXP806_DCDCA_NUM_VOLTAGES	72
@@ -367,14 +367,16 @@ static const int axp209_dcdc2_ldo3_slew_rates[] = {
 static int axp20x_set_ramp_delay(struct regulator_dev *rdev, int ramp)
 {
 	struct axp20x_dev *axp20x = rdev_get_drvdata(rdev);
-	int id = rdev_get_id(rdev);
+	const struct regulator_desc *desc;
 	u8 reg, mask, enable, cfg = 0xff;
 	const int *slew_rates;
 	int rate_count = 0;
 
+	desc = rdev->desc;
+
 	switch (axp20x->variant) {
 	case AXP209_ID:
-		if (id == AXP20X_DCDC2) {
+		if (desc->id == AXP20X_DCDC2) {
 			slew_rates = axp209_dcdc2_ldo3_slew_rates;
 			rate_count = ARRAY_SIZE(axp209_dcdc2_ldo3_slew_rates);
 			reg = AXP20X_DCDC2_LDO3_V_RAMP;
@@ -386,7 +388,7 @@ static int axp20x_set_ramp_delay(struct regulator_dev *rdev, int ramp)
 			break;
 		}
 
-		if (id == AXP20X_LDO3) {
+		if (desc->id == AXP20X_LDO3) {
 			slew_rates = axp209_dcdc2_ldo3_slew_rates;
 			rate_count = ARRAY_SIZE(axp209_dcdc2_ldo3_slew_rates);
 			reg = AXP20X_DCDC2_LDO3_V_RAMP;
@@ -433,11 +435,16 @@ static int axp20x_set_ramp_delay(struct regulator_dev *rdev, int ramp)
 static int axp20x_regulator_enable_regmap(struct regulator_dev *rdev)
 {
 	struct axp20x_dev *axp20x = rdev_get_drvdata(rdev);
-	int id = rdev_get_id(rdev);
+	const struct regulator_desc *desc;
+
+	if (!rdev)
+		return -EINVAL;
+
+	desc = rdev->desc;
 
 	switch (axp20x->variant) {
 	case AXP209_ID:
-		if ((id == AXP20X_LDO3) &&
+		if ((desc->id == AXP20X_LDO3) &&
 		    rdev->constraints && rdev->constraints->soft_start) {
 			int v_out;
 			int ret;
@@ -774,8 +781,8 @@ static const struct regulator_linear_range axp806_dcdcd_ranges[] = {
 			       AXP806_DCDCD_600mV_END,
 			       20000),
 	REGULATOR_LINEAR_RANGE(1600000,
-			       AXP806_DCDCD_1600mV_START,
-			       AXP806_DCDCD_1600mV_END,
+			       AXP806_DCDCD_600mV_START,
+			       AXP806_DCDCD_600mV_END,
 			       100000),
 };
 
@@ -1021,7 +1028,7 @@ static int axp20x_set_dcdc_freq(struct platform_device *pdev, u32 dcdcfreq)
 		 * (See include/linux/mfd/axp20x.h)
 		 */
 		reg = AXP803_DCDC_FREQ_CTRL;
-		/* Fall through - to the check below.*/
+		/* Fall through to the check below.*/
 	case AXP806_ID:
 		/*
 		 * AXP806 also have DCDC work frequency setting register at a
@@ -1112,12 +1119,12 @@ static int axp20x_set_dcdc_workmode(struct regulator_dev *rdev, int id, u32 work
 		break;
 
 	case AXP806_ID:
+		reg = AXP806_DCDC_MODE_CTRL2;
 		/*
 		 * AXP806 DCDC regulator IDs have the same range as AXP22X.
+		 * Fall through to the check below.
 		 * (See include/linux/mfd/axp20x.h)
 		 */
-		reg = AXP806_DCDC_MODE_CTRL2;
-		 /* Fall through - to the check below. */
 	case AXP221_ID:
 	case AXP223_ID:
 	case AXP809_ID:

@@ -798,7 +798,7 @@ int vivid_vid_out_s_selection(struct file *file, void *fh, struct v4l2_selection
 		s->r.height *= factor;
 		if (dev->bitmap_out && (compose->width != s->r.width ||
 					compose->height != s->r.height)) {
-			vfree(dev->bitmap_out);
+			kfree(dev->bitmap_out);
 			dev->bitmap_out = NULL;
 		}
 		*compose = s->r;
@@ -941,19 +941,15 @@ int vidioc_s_fmt_vid_out_overlay(struct file *file, void *priv,
 		return ret;
 
 	if (win->bitmap) {
-		new_bitmap = vzalloc(bitmap_size);
+		new_bitmap = memdup_user(win->bitmap, bitmap_size);
 
-		if (!new_bitmap)
-			return -ENOMEM;
-		if (copy_from_user(new_bitmap, win->bitmap, bitmap_size)) {
-			vfree(new_bitmap);
-			return -EFAULT;
-		}
+		if (IS_ERR(new_bitmap))
+			return PTR_ERR(new_bitmap);
 	}
 
 	dev->overlay_out_top = win->w.top;
 	dev->overlay_out_left = win->w.left;
-	vfree(dev->bitmap_out);
+	kfree(dev->bitmap_out);
 	dev->bitmap_out = new_bitmap;
 	dev->clipcount_out = win->clipcount;
 	if (dev->clipcount_out)
@@ -1094,12 +1090,6 @@ int vidioc_s_output(struct file *file, void *priv, unsigned o)
 
 	dev->vbi_out_dev.tvnorms = dev->vid_out_dev.tvnorms;
 	vivid_update_format_out(dev);
-
-	v4l2_ctrl_activate(dev->ctrl_display_present, vivid_is_hdmi_out(dev));
-	if (vivid_is_hdmi_out(dev))
-		v4l2_ctrl_s_ctrl(dev->ctrl_display_present,
-				 dev->display_present[dev->output]);
-
 	return 0;
 }
 

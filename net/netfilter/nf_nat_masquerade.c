@@ -7,10 +7,12 @@
 #include <linux/netfilter_ipv4.h>
 #include <linux/netfilter_ipv6.h>
 
-#include <net/netfilter/nf_nat_masquerade.h>
+#include <net/netfilter/ipv4/nf_nat_masquerade.h>
+#include <net/netfilter/ipv6/nf_nat_masquerade.h>
 
 static DEFINE_MUTEX(masq_mutex);
-static unsigned int masq_refcnt __read_mostly;
+static unsigned int masq_refcnt4 __read_mostly;
+static unsigned int masq_refcnt6 __read_mostly;
 
 unsigned int
 nf_nat_masquerade_ipv4(struct sk_buff *skb, unsigned int hooknum,
@@ -134,6 +136,56 @@ static struct notifier_block masq_dev_notifier = {
 static struct notifier_block masq_inet_notifier = {
 	.notifier_call	= masq_inet_event,
 };
+
+int nf_nat_masquerade_ipv4_register_notifier(void)
+{
+	int ret = 0;
+
+	mutex_lock(&masq_mutex);
+	if (WARN_ON_ONCE(masq_refcnt4 == UINT_MAX)) {
+		ret = -EOVERFLOW;
+		goto out_unlock;
+	}
+
+	/* check if the notifier was already set */
+	if (++masq_refcnt4 > 1)
+		goto out_unlock;
+
+	/* Register for device down reports */
+	ret = register_netdevice_notifier(&masq_dev_notifier);
+	if (ret)
+		goto err_dec;
+	/* Register IP address change reports */
+	ret = register_inetaddr_notifier(&masq_inet_notifier);
+	if (ret)
+		goto err_unregister;
+
+	mutex_unlock(&masq_mutex);
+	return ret;
+
+err_unregister:
+	unregister_netdevice_notifier(&masq_dev_notifier);
+err_dec:
+	masq_refcnt4--;
+out_unlock:
+	mutex_unlock(&masq_mutex);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(nf_nat_masquerade_ipv4_register_notifier);
+
+void nf_nat_masquerade_ipv4_unregister_notifier(void)
+{
+	mutex_lock(&masq_mutex);
+	/* check if the notifier still has clients */
+	if (--masq_refcnt4 > 0)
+		goto out_unlock;
+
+	unregister_netdevice_notifier(&masq_dev_notifier);
+	unregister_inetaddr_notifier(&masq_inet_notifier);
+out_unlock:
+	mutex_unlock(&masq_mutex);
+}
+EXPORT_SYMBOL_GPL(nf_nat_masquerade_ipv4_unregister_notifier);
 
 #if IS_ENABLED(CONFIG_IPV6)
 static atomic_t v6_worker_count __read_mostly;
@@ -270,68 +322,44 @@ static struct notifier_block masq_inet6_notifier = {
 	.notifier_call	= masq_inet6_event,
 };
 
-static int nf_nat_masquerade_ipv6_register_notifier(void)
-{
-	return register_inet6addr_notifier(&masq_inet6_notifier);
-}
-#else
-static inline int nf_nat_masquerade_ipv6_register_notifier(void) { return 0; }
-#endif
-
-int nf_nat_masquerade_inet_register_notifiers(void)
+int nf_nat_masquerade_ipv6_register_notifier(void)
 {
 	int ret = 0;
 
 	mutex_lock(&masq_mutex);
-	if (WARN_ON_ONCE(masq_refcnt == UINT_MAX)) {
+	if (WARN_ON_ONCE(masq_refcnt6 == UINT_MAX)) {
 		ret = -EOVERFLOW;
 		goto out_unlock;
 	}
 
-	/* check if the notifier was already set */
-	if (++masq_refcnt > 1)
+	/* check if the notifier is already set */
+	if (++masq_refcnt6 > 1)
 		goto out_unlock;
 
-	/* Register for device down reports */
-	ret = register_netdevice_notifier(&masq_dev_notifier);
+	ret = register_inet6addr_notifier(&masq_inet6_notifier);
 	if (ret)
 		goto err_dec;
-	/* Register IP address change reports */
-	ret = register_inetaddr_notifier(&masq_inet_notifier);
-	if (ret)
-		goto err_unregister;
-
-	ret = nf_nat_masquerade_ipv6_register_notifier();
-	if (ret)
-		goto err_unreg_inet;
 
 	mutex_unlock(&masq_mutex);
 	return ret;
-err_unreg_inet:
-	unregister_inetaddr_notifier(&masq_inet_notifier);
-err_unregister:
-	unregister_netdevice_notifier(&masq_dev_notifier);
 err_dec:
-	masq_refcnt--;
+	masq_refcnt6--;
 out_unlock:
 	mutex_unlock(&masq_mutex);
 	return ret;
 }
-EXPORT_SYMBOL_GPL(nf_nat_masquerade_inet_register_notifiers);
+EXPORT_SYMBOL_GPL(nf_nat_masquerade_ipv6_register_notifier);
 
-void nf_nat_masquerade_inet_unregister_notifiers(void)
+void nf_nat_masquerade_ipv6_unregister_notifier(void)
 {
 	mutex_lock(&masq_mutex);
-	/* check if the notifiers still have clients */
-	if (--masq_refcnt > 0)
+	/* check if the notifier still has clients */
+	if (--masq_refcnt6 > 0)
 		goto out_unlock;
 
-	unregister_netdevice_notifier(&masq_dev_notifier);
-	unregister_inetaddr_notifier(&masq_inet_notifier);
-#if IS_ENABLED(CONFIG_IPV6)
 	unregister_inet6addr_notifier(&masq_inet6_notifier);
-#endif
 out_unlock:
 	mutex_unlock(&masq_mutex);
 }
-EXPORT_SYMBOL_GPL(nf_nat_masquerade_inet_unregister_notifiers);
+EXPORT_SYMBOL_GPL(nf_nat_masquerade_ipv6_unregister_notifier);
+#endif

@@ -95,7 +95,6 @@ struct occ {
 	struct occ_sensors sensors;
 
 	int powr_sample_time_us;	/* average power sample time */
-	u8 seq_no;
 	u8 poll_cmd_data;		/* to perform OCC poll command */
 	int (*send_cmd)(struct occ *occ, u8 *cmd);
 
@@ -107,8 +106,7 @@ struct occ {
 	struct attribute_group group;
 	const struct attribute_group *groups[2];
 
-	int error;                      /* final transfer error after retry */
-	int last_error;			/* latest transfer error */
+	int error;                      /* latest transfer error */
 	unsigned int error_count;       /* number of xfr errors observed */
 	unsigned long last_safe;        /* time OCC entered "safe" state */
 

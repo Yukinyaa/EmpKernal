@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright 2016, Rashmica Gupta, IBM Corp.
  *
@@ -8,6 +7,11 @@
  *
  * If radix is enabled then there is no hash page table and so no debugfs file
  * is generated.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; version 2
+ * of the License.
  */
 #include <linux/debugfs.h>
 #include <linux/fs.h>
@@ -496,7 +500,7 @@ static void populate_markers(void)
 	address_markers[7].start_address = IOREMAP_BASE;
 	address_markers[8].start_address = IOREMAP_END;
 #ifdef CONFIG_PPC_BOOK3S_64
-	address_markers[9].start_address =  H_VMEMMAP_START;
+	address_markers[9].start_address =  H_VMEMMAP_BASE;
 #else
 	address_markers[9].start_address =  VMEMMAP_BASE;
 #endif

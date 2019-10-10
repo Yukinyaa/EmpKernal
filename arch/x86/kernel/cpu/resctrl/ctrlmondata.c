@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Resource Director Technology(RDT)
  * - Cache Allocation code.
@@ -8,6 +7,15 @@
  * Authors:
  *    Fenghua Yu <fenghua.yu@intel.com>
  *    Tony Luck <tony.luck@intel.com>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
  *
  * More information about RDT be found in the Intel (R) x86 Architecture
  * Software Developer Manual June 2016, volume 3, section 17.17.
@@ -334,10 +342,10 @@ int update_domains(struct rdt_resource *r, int closid)
 	if (cpumask_empty(cpu_mask) || mba_sc)
 		goto done;
 	cpu = get_cpu();
-	/* Update resource control msr on this CPU if it's in cpu_mask. */
+	/* Update CBM on this cpu if it's in cpu_mask. */
 	if (cpumask_test_cpu(cpu, cpu_mask))
 		rdt_ctrl_update(&msr_param);
-	/* Update resource control msr on other CPUs. */
+	/* Update CBM on other cpus. */
 	smp_call_function_many(cpu_mask, rdt_ctrl_update, &msr_param, 1);
 	put_cpu();
 

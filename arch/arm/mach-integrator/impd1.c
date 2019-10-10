@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/arch/arm/mach-integrator/impd1.c
  *
  *  Copyright (C) 2003 Deep Blue Solutions Ltd, All Rights Reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  *
  *  This file provides the core support for the IM-PD1 module.
  *
@@ -24,7 +27,7 @@
 #include <linux/irqchip/arm-vic.h>
 #include <linux/gpio/machine.h>
 
-#include <linux/sizes.h>
+#include <asm/sizes.h>
 #include "lm.h"
 #include "impd1.h"
 

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * GPMC support functions
  *
@@ -8,6 +7,10 @@
  *
  * Copyright (C) 2009 Texas Instruments
  * Added OMAP4 support - Santosh Shilimkar <santosh.shilimkar@ti.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 #include <linux/irq.h>
 #include <linux/kernel.h>
@@ -19,7 +22,6 @@
 #include <linux/io.h>
 #include <linux/gpio/driver.h>
 #include <linux/gpio/consumer.h> /* GPIO descriptor enum */
-#include <linux/gpio/machine.h>
 #include <linux/interrupt.h>
 #include <linux/irqdomain.h>
 #include <linux/platform_device.h>
@@ -2170,8 +2172,7 @@ static int gpmc_probe_generic_child(struct platform_device *pdev,
 
 		waitpin_desc = gpiochip_request_own_desc(&gpmc->gpio_chip,
 							 wait_pin, "WAITPIN",
-							 GPIO_ACTIVE_HIGH,
-							 GPIOD_IN);
+							 0);
 		if (IS_ERR(waitpin_desc)) {
 			dev_err(&pdev->dev, "invalid wait-pin: %d\n", wait_pin);
 			ret = PTR_ERR(waitpin_desc);

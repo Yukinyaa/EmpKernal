@@ -1,7 +1,15 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) Fuzhou Rockchip Electronics Co.Ltd
  * Author:Mark Yao <mark.yao@rock-chips.com>
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <drm/drm.h>
@@ -82,10 +90,12 @@ static int rockchip_drm_fbdev_create(struct drm_fb_helper *helper,
 		goto out;
 	}
 
+	fbi->par = helper;
 	fbi->fbops = &rockchip_drm_fbdev_ops;
 
 	fb = helper->fb;
-	drm_fb_helper_fill_info(fbi, helper, sizes);
+	drm_fb_helper_fill_fix(fbi, fb->pitches[0], fb->format->depth);
+	drm_fb_helper_fill_var(fbi, helper, sizes->fb_width, sizes->fb_height);
 
 	offset = fbi->var.xoffset * bytes_per_pixel;
 	offset += fbi->var.yoffset * fb->pitches[0];
@@ -99,6 +109,8 @@ static int rockchip_drm_fbdev_create(struct drm_fb_helper *helper,
 		      fb->width, fb->height, fb->format->depth,
 		      rk_obj->kvaddr,
 		      offset, size);
+
+	fbi->skip_vt_switch = true;
 
 	return 0;
 

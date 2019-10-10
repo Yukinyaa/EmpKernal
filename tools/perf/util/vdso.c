@@ -16,7 +16,6 @@
 #include "machine.h"
 #include "thread.h"
 #include "linux/string.h"
-#include <linux/zalloc.h>
 #include "debug.h"
 
 /*

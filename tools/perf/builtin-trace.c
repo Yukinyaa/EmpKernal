@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * builtin-trace.c
  *
@@ -13,13 +12,14 @@
  * Initially based on the 'trace' prototype by Thomas Gleixner:
  *
  * http://lwn.net/Articles/415728/ ("Announcing a new utility: 'trace'")
+ *
+ * Released under the GPL v2. (and only v2, not any later version)
  */
 
 #include <traceevent/event-parse.h>
 #include <api/fs/tracing_path.h>
 #include <bpf/bpf.h>
 #include "util/bpf_map.h"
-#include "util/rlimit.h"
 #include "builtin.h"
 #include "util/cgroup.h"
 #include "util/color.h"
@@ -62,11 +62,10 @@
 #include <linux/random.h>
 #include <linux/stringify.h>
 #include <linux/time64.h>
-#include <linux/zalloc.h>
 #include <fcntl.h>
 #include <sys/sysmacros.h>
 
-#include <linux/ctype.h>
+#include "sane_ctype.h"
 
 #ifndef O_CLOEXEC
 # define O_CLOEXEC		02000000
@@ -404,11 +403,6 @@ static size_t syscall_arg__scnprintf_strarray(char *bf, size_t size,
 
 #define SCA_STRARRAY syscall_arg__scnprintf_strarray
 
-size_t syscall_arg__scnprintf_strarray_flags(char *bf, size_t size, struct syscall_arg *arg)
-{
-	return strarray__scnprintf_flags(arg->parm, bf, size, arg->show_string_prefix, arg->val);
-}
-
 size_t strarrays__scnprintf(struct strarrays *sas, char *bf, size_t size, const char *intfmt, bool show_prefix, int val)
 {
 	size_t printed;
@@ -487,15 +481,6 @@ static const char *bpf_cmd[] = {
 	"MAP_GET_NEXT_KEY", "PROG_LOAD",
 };
 static DEFINE_STRARRAY(bpf_cmd, "BPF_");
-
-static const char *fsmount_flags[] = {
-	[1] = "CLOEXEC",
-};
-static DEFINE_STRARRAY(fsmount_flags, "FSMOUNT_");
-
-#include "trace/beauty/generated/fsconfig_arrays.c"
-
-static DEFINE_STRARRAY(fsconfig_cmds, "FSCONFIG_");
 
 static const char *epoll_ctl_ops[] = { "ADD", "DEL", "MOD", };
 static DEFINE_STRARRAY_OFFSET(epoll_ctl_ops, "EPOLL_CTL_", 1);
@@ -657,10 +642,6 @@ static size_t syscall_arg__scnprintf_getrandom_flags(char *bf, size_t size,
 	  { .scnprintf	= SCA_STRARRAY, \
 	    .parm	= &strarray__##array, }
 
-#define STRARRAY_FLAGS(name, array) \
-	  { .scnprintf	= SCA_STRARRAY_FLAGS, \
-	    .parm	= &strarray__##array, }
-
 #include "trace/beauty/arch_errno_names.c"
 #include "trace/beauty/eventfd.c"
 #include "trace/beauty/futex_op.c"
@@ -732,15 +713,6 @@ static struct syscall_fmt {
 		   [2] = { .scnprintf =  SCA_FCNTL_ARG, /* arg */ }, }, },
 	{ .name	    = "flock",
 	  .arg = { [1] = { .scnprintf = SCA_FLOCK, /* cmd */ }, }, },
-	{ .name     = "fsconfig",
-	  .arg = { [1] = STRARRAY(cmd, fsconfig_cmds), }, },
-	{ .name     = "fsmount",
-	  .arg = { [1] = STRARRAY_FLAGS(flags, fsmount_flags),
-		   [2] = { .scnprintf = SCA_FSMOUNT_ATTR_FLAGS, /* attr_flags */ }, }, },
-	{ .name     = "fspick",
-	  .arg = { [0] = { .scnprintf = SCA_FDAT,	  /* dfd */ },
-		   [1] = { .scnprintf = SCA_FILENAME,	  /* path */ },
-		   [2] = { .scnprintf = SCA_FSPICK_FLAGS, /* flags */ }, }, },
 	{ .name	    = "fstat", .alias = "newfstat", },
 	{ .name	    = "fstatat", .alias = "newfstatat", },
 	{ .name	    = "futex",
@@ -803,12 +775,6 @@ static struct syscall_fmt {
 	  .arg = { [0] = { .scnprintf = SCA_FILENAME, /* dev_name */ },
 		   [3] = { .scnprintf = SCA_MOUNT_FLAGS, /* flags */
 			   .mask_val  = SCAMV_MOUNT_FLAGS, /* flags */ }, }, },
-	{ .name	    = "move_mount",
-	  .arg = { [0] = { .scnprintf = SCA_FDAT,	/* from_dfd */ },
-		   [1] = { .scnprintf = SCA_FILENAME, /* from_pathname */ },
-		   [2] = { .scnprintf = SCA_FDAT,	/* to_dfd */ },
-		   [3] = { .scnprintf = SCA_FILENAME, /* to_pathname */ },
-		   [4] = { .scnprintf = SCA_MOVE_MOUNT_FLAGS, /* flags */ }, }, },
 	{ .name	    = "mprotect",
 	  .arg = { [0] = { .scnprintf = SCA_HEX,	/* start */ },
 		   [2] = { .scnprintf = SCA_MMAP_PROT,	/* prot */ }, }, },
@@ -913,8 +879,6 @@ static struct syscall_fmt {
 	  .arg = { [0] = { .scnprintf = SCA_FILENAME, /* specialfile */ }, }, },
 	{ .name	    = "symlinkat",
 	  .arg = { [0] = { .scnprintf = SCA_FDAT, /* dfd */ }, }, },
-	{ .name	    = "sync_file_range",
-	  .arg = { [3] = { .scnprintf = SCA_SYNC_FILE_RANGE_FLAGS, /* flags */ }, }, },
 	{ .name	    = "tgkill",
 	  .arg = { [2] = { .scnprintf = SCA_SIGNUM, /* sig */ }, }, },
 	{ .name	    = "tkill",
@@ -973,14 +937,8 @@ struct syscall {
 	struct syscall_arg_fmt *arg_fmt;
 };
 
-/*
- * Must match what is in the BPF program:
- *
- * tools/perf/examples/bpf/augmented_raw_syscalls.c
- */
 struct bpf_map_syscall_entry {
 	bool	enabled;
-	u16	string_args_len[6];
 };
 
 /*
@@ -1040,10 +998,10 @@ static struct thread_trace *thread_trace__new(void)
 {
 	struct thread_trace *ttrace =  zalloc(sizeof(struct thread_trace));
 
-	if (ttrace) {
+	if (ttrace)
 		ttrace->files.max = -1;
-		ttrace->syscall_stats = intlist__new(NULL);
-	}
+
+	ttrace->syscall_stats = intlist__new(NULL);
 
 	return ttrace;
 }
@@ -1234,17 +1192,8 @@ static void thread__set_filename_pos(struct thread *thread, const char *bf,
 static size_t syscall_arg__scnprintf_augmented_string(struct syscall_arg *arg, char *bf, size_t size)
 {
 	struct augmented_arg *augmented_arg = arg->augmented.args;
-	size_t printed = scnprintf(bf, size, "\"%.*s\"", augmented_arg->size, augmented_arg->value);
-	/*
-	 * So that the next arg with a payload can consume its augmented arg, i.e. for rename* syscalls
-	 * we would have two strings, each prefixed by its size.
-	 */
-	int consumed = sizeof(*augmented_arg) + augmented_arg->size;
 
-	arg->augmented.args = ((void *)arg->augmented.args) + consumed;
-	arg->augmented.size -= consumed;
-
-	return printed;
+	return scnprintf(bf, size, "\"%.*s\"", augmented_arg->size, augmented_arg->value);
 }
 
 static size_t syscall_arg__scnprintf_filename(char *bf, size_t size,
@@ -1432,11 +1381,10 @@ static int syscall__set_arg_fmts(struct syscall *sc)
 		if (sc->fmt && sc->fmt->arg[idx].scnprintf)
 			continue;
 
-		len = strlen(field->name);
-
 		if (strcmp(field->type, "const char *") == 0 &&
-		    ((len >= 4 && strcmp(field->name + len - 4, "name") == 0) ||
-		     strstr(field->name, "path") != NULL))
+			 (strcmp(field->name, "filename") == 0 ||
+			  strcmp(field->name, "path") == 0 ||
+			  strcmp(field->name, "pathname") == 0))
 			sc->arg_fmt[idx].scnprintf = SCA_FILENAME;
 		else if ((field->flags & TEP_FIELD_IS_POINTER) || strstr(field->name, "addr"))
 			sc->arg_fmt[idx].scnprintf = SCA_PTR;
@@ -1447,7 +1395,8 @@ static int syscall__set_arg_fmts(struct syscall *sc)
 		else if ((strcmp(field->type, "int") == 0 ||
 			  strcmp(field->type, "unsigned int") == 0 ||
 			  strcmp(field->type, "long") == 0) &&
-			 len >= 2 && strcmp(field->name + len - 2, "fd") == 0) {
+			 (len = strlen(field->name)) >= 2 &&
+			 strcmp(field->name + len - 2, "fd") == 0) {
 			/*
 			 * /sys/kernel/tracing/events/syscalls/sys_enter*
 			 * egrep 'field:.*fd;' .../format|sed -r 's/.*field:([a-z ]+) [a-z_]*fd.+/\1/g'|sort|uniq -c
@@ -1529,12 +1478,12 @@ static int trace__read_syscall_info(struct trace *trace, int id)
 
 static int trace__validate_ev_qualifier(struct trace *trace)
 {
-	int err = 0;
-	bool printed_invalid_prefix = false;
+	int err = 0, i;
+	size_t nr_allocated;
 	struct str_node *pos;
-	size_t nr_used = 0, nr_allocated = strlist__nr_entries(trace->ev_qualifier);
 
-	trace->ev_qualifier_ids.entries = malloc(nr_allocated *
+	trace->ev_qualifier_ids.nr = strlist__nr_entries(trace->ev_qualifier);
+	trace->ev_qualifier_ids.entries = malloc(trace->ev_qualifier_ids.nr *
 						 sizeof(trace->ev_qualifier_ids.entries[0]));
 
 	if (trace->ev_qualifier_ids.entries == NULL) {
@@ -1543,6 +1492,9 @@ static int trace__validate_ev_qualifier(struct trace *trace)
 		err = -EINVAL;
 		goto out;
 	}
+
+	nr_allocated = trace->ev_qualifier_ids.nr;
+	i = 0;
 
 	strlist__for_each_entry(pos, trace->ev_qualifier) {
 		const char *sc = pos->s;
@@ -1553,18 +1505,17 @@ static int trace__validate_ev_qualifier(struct trace *trace)
 			if (id >= 0)
 				goto matches;
 
-			if (!printed_invalid_prefix) {
-				pr_debug("Skipping unknown syscalls: ");
-				printed_invalid_prefix = true;
+			if (err == 0) {
+				fputs("Error:\tInvalid syscall ", trace->output);
+				err = -EINVAL;
 			} else {
-				pr_debug(", ");
+				fputs(", ", trace->output);
 			}
 
-			pr_debug("%s", sc);
-			continue;
+			fputs(sc, trace->output);
 		}
 matches:
-		trace->ev_qualifier_ids.entries[nr_used++] = id;
+		trace->ev_qualifier_ids.entries[i++] = id;
 		if (match_next == -1)
 			continue;
 
@@ -1572,7 +1523,7 @@ matches:
 			id = syscalltbl__strglobmatch_next(trace->sctbl, sc, &match_next);
 			if (id < 0)
 				break;
-			if (nr_allocated == nr_used) {
+			if (nr_allocated == trace->ev_qualifier_ids.nr) {
 				void *entries;
 
 				nr_allocated += 8;
@@ -1585,19 +1536,20 @@ matches:
 				}
 				trace->ev_qualifier_ids.entries = entries;
 			}
-			trace->ev_qualifier_ids.entries[nr_used++] = id;
+			trace->ev_qualifier_ids.nr++;
+			trace->ev_qualifier_ids.entries[i++] = id;
 		}
 	}
 
-	trace->ev_qualifier_ids.nr = nr_used;
-out:
-	if (printed_invalid_prefix)
-		pr_debug("\n");
-	return err;
+	if (err < 0) {
+		fputs("\nHint:\ttry 'perf list syscalls:sys_enter_*'"
+		      "\nHint:\tand: 'man syscalls'\n", trace->output);
 out_free:
-	zfree(&trace->ev_qualifier_ids.entries);
-	trace->ev_qualifier_ids.nr = 0;
-	goto out;
+		zfree(&trace->ev_qualifier_ids.entries);
+		trace->ev_qualifier_ids.nr = 0;
+	}
+out:
+	return err;
 }
 
 /*
@@ -2724,25 +2676,6 @@ out_enomem:
 }
 
 #ifdef HAVE_LIBBPF_SUPPORT
-static void trace__init_bpf_map_syscall_args(struct trace *trace, int id, struct bpf_map_syscall_entry *entry)
-{
-	struct syscall *sc = trace__syscall_info(trace, NULL, id);
-	int arg = 0;
-
-	if (sc == NULL)
-		goto out;
-
-	for (; arg < sc->nr_args; ++arg) {
-		entry->string_args_len[arg] = 0;
-		if (sc->arg_fmt[arg].scnprintf == SCA_FILENAME) {
-			/* Should be set like strace -s strsize */
-			entry->string_args_len[arg] = PATH_MAX;
-		}
-	}
-out:
-	for (; arg < 6; ++arg)
-		entry->string_args_len[arg] = 0;
-}
 static int trace__set_ev_qualifier_bpf_filter(struct trace *trace)
 {
 	int fd = bpf_map__fd(trace->syscalls.map);
@@ -2754,9 +2687,6 @@ static int trace__set_ev_qualifier_bpf_filter(struct trace *trace)
 
 	for (i = 0; i < trace->ev_qualifier_ids.nr; ++i) {
 		int key = trace->ev_qualifier_ids.entries[i];
-
-		if (value.enabled)
-			trace__init_bpf_map_syscall_args(trace, key, &value);
 
 		err = bpf_map_update_elem(fd, &key, &value, BPF_EXIST);
 		if (err)
@@ -2775,9 +2705,6 @@ static int __trace__init_syscalls_bpf_map(struct trace *trace, bool enabled)
 	int err = 0, key;
 
 	for (key = 0; key < trace->sctbl->syscalls.nr_entries; ++key) {
-		if (enabled)
-			trace__init_bpf_map_syscall_args(trace, key, &value);
-
 		err = bpf_map_update_elem(fd, &key, &value, BPF_ANY);
 		if (err)
 			break;
@@ -3701,12 +3628,7 @@ static int trace__config(const char *var, const char *value, void *arg)
 		struct option o = OPT_CALLBACK('e', "event", &trace->evlist, "event",
 					       "event selector. use 'perf list' to list available events",
 					       parse_events_option);
-		/*
-		 * We can't propagate parse_event_option() return, as it is 1
-		 * for failure while perf_config() expects -1.
-		 */
-		if (parse_events_option(&o, value, 0))
-			err = -1;
+		err = parse_events_option(&o, value, 0);
 	} else if (!strcmp(var, "trace.show_timestamp")) {
 		trace->show_tstamp = perf_config_bool(var, value);
 	} else if (!strcmp(var, "trace.show_duration")) {
@@ -3864,15 +3786,6 @@ int cmd_trace(int argc, const char **argv)
 		err = -ENOMEM;
 		goto out;
 	}
-
-	/*
-	 * Parsing .perfconfig may entail creating a BPF event, that may need
-	 * to create BPF maps, so bump RLIM_MEMLOCK as the default 64K setting
-	 * is too small. This affects just this process, not touching the
-	 * global setting. If it fails we'll get something in 'perf trace -v'
-	 * to help diagnose the problem.
-	 */
-	rlimit__bump_memlock();
 
 	err = perf_config(trace__config, &trace);
 	if (err)

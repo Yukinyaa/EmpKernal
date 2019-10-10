@@ -1350,9 +1350,8 @@ int of_phandle_iterator_next(struct of_phandle_iterator *it)
 		 * property data length
 		 */
 		if (it->cur + count > it->list_end) {
-			pr_err("%pOF: %s = %d found %d\n",
-			       it->parent, it->cells_name,
-			       count, it->cell_count);
+			pr_err("%pOF: arguments longer than property\n",
+			       it->parent);
 			goto err;
 		}
 	}
@@ -2294,12 +2293,8 @@ int of_map_rid(struct device_node *np, u32 rid,
 		return 0;
 	}
 
-	pr_info("%pOF: no %s translation for rid 0x%x on %pOF\n", np, map_name,
-		rid, target && *target ? *target : NULL);
-
-	/* Bypasses translation */
-	if (id_out)
-		*id_out = rid;
-	return 0;
+	pr_err("%pOF: Invalid %s translation - no match for rid 0x%x on %pOF\n",
+		np, map_name, rid, target && *target ? *target : NULL);
+	return -EFAULT;
 }
 EXPORT_SYMBOL_GPL(of_map_rid);

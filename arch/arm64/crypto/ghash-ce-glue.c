@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Accelerated GHASH implementation with ARMv8 PMULL instructions.
  *
  * Copyright (C) 2014 - 2018 Linaro Ltd. <ard.biesheuvel@linaro.org>
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published
+ * by the Free Software Foundation.
  */
 
 #include <asm/neon.h>
@@ -14,7 +17,6 @@
 #include <crypto/gf128mul.h>
 #include <crypto/internal/aead.h>
 #include <crypto/internal/hash.h>
-#include <crypto/internal/simd.h>
 #include <crypto/internal/skcipher.h>
 #include <crypto/scatterwalk.h>
 #include <linux/cpufeature.h>
@@ -87,7 +89,7 @@ static void ghash_do_update(int blocks, u64 dg[], const char *src,
 						struct ghash_key const *k,
 						const char *head))
 {
-	if (likely(crypto_simd_usable())) {
+	if (likely(may_use_simd())) {
 		kernel_neon_begin();
 		simd_update(blocks, dg, src, key, head);
 		kernel_neon_end();
@@ -439,7 +441,7 @@ static int gcm_encrypt(struct aead_request *req)
 
 	err = skcipher_walk_aead_encrypt(&walk, req, false);
 
-	if (likely(crypto_simd_usable() && walk.total >= 2 * AES_BLOCK_SIZE)) {
+	if (likely(may_use_simd() && walk.total >= 2 * AES_BLOCK_SIZE)) {
 		u32 const *rk = NULL;
 
 		kernel_neon_begin();
@@ -563,7 +565,7 @@ static int gcm_decrypt(struct aead_request *req)
 
 	err = skcipher_walk_aead_decrypt(&walk, req, false);
 
-	if (likely(crypto_simd_usable() && walk.total >= 2 * AES_BLOCK_SIZE)) {
+	if (likely(may_use_simd() && walk.total >= 2 * AES_BLOCK_SIZE)) {
 		u32 const *rk = NULL;
 
 		kernel_neon_begin();
@@ -704,10 +706,10 @@ static int __init ghash_ce_mod_init(void)
 {
 	int ret;
 
-	if (!cpu_have_named_feature(ASIMD))
+	if (!(elf_hwcap & HWCAP_ASIMD))
 		return -ENODEV;
 
-	if (cpu_have_named_feature(PMULL))
+	if (elf_hwcap & HWCAP_PMULL)
 		ret = crypto_register_shashes(ghash_alg,
 					      ARRAY_SIZE(ghash_alg));
 	else
@@ -717,7 +719,7 @@ static int __init ghash_ce_mod_init(void)
 	if (ret)
 		return ret;
 
-	if (cpu_have_named_feature(PMULL)) {
+	if (elf_hwcap & HWCAP_PMULL) {
 		ret = crypto_register_aead(&gcm_aes_alg);
 		if (ret)
 			crypto_unregister_shashes(ghash_alg,
@@ -728,7 +730,7 @@ static int __init ghash_ce_mod_init(void)
 
 static void __exit ghash_ce_mod_exit(void)
 {
-	if (cpu_have_named_feature(PMULL))
+	if (elf_hwcap & HWCAP_PMULL)
 		crypto_unregister_shashes(ghash_alg, ARRAY_SIZE(ghash_alg));
 	else
 		crypto_unregister_shash(ghash_alg);

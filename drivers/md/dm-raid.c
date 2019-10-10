@@ -3194,7 +3194,7 @@ static int raid_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			  */
 			r = rs_prepare_reshape(rs);
 			if (r)
-				goto bad;
+				return r;
 
 			/* Reshaping ain't recovery, so disable recovery */
 			rs_setup_recovery(rs, MaxSector);
@@ -3558,7 +3558,7 @@ static void raid_status(struct dm_target *ti, status_type_t type,
 		 * v1.5.0+:
 		 *
 		 * Sync action:
-		 *   See Documentation/admin-guide/device-mapper/dm-raid.rst for
+		 *   See Documentation/device-mapper/dm-raid.txt for
 		 *   information on each of these states.
 		 */
 		DMEMIT(" %s", sync_action);

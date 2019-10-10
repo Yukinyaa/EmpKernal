@@ -23,13 +23,11 @@
  *
  * Authors: Alex Deucher
  */
-
-#include <linux/dma-buf.h>
-
-#include <drm/drm_prime.h>
-#include <drm/radeon_drm.h>
+#include <drm/drmP.h>
 
 #include "radeon.h"
+#include <drm/radeon_drm.h>
+#include <linux/dma-buf.h>
 
 struct sg_table *radeon_gem_prime_get_sg_table(struct drm_gem_object *obj)
 {

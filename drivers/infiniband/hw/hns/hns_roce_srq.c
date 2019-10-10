@@ -30,6 +30,7 @@ void hns_roce_srq_event(struct hns_roce_dev *hr_dev, u32 srqn, int event_type)
 	if (atomic_dec_and_test(&srq->refcount))
 		complete(&srq->free);
 }
+EXPORT_SYMBOL_GPL(hns_roce_srq_event);
 
 static void hns_roce_ib_srq_event(struct hns_roce_srq *srq,
 				  enum hns_roce_event event_type)
@@ -180,29 +181,38 @@ static int hns_roce_create_idx_que(struct ib_pd *pd, struct hns_roce_srq *srq,
 {
 	struct hns_roce_dev *hr_dev = to_hr_dev(pd->device);
 	struct hns_roce_idx_que *idx_que = &srq->idx_que;
+	u32 bitmap_num;
+	int i;
 
-	idx_que->bitmap = bitmap_zalloc(srq->max, GFP_KERNEL);
+	bitmap_num = HNS_ROCE_ALOGN_UP(srq->max, 8 * sizeof(u64));
+
+	idx_que->bitmap = kcalloc(1, bitmap_num / 8, GFP_KERNEL);
 	if (!idx_que->bitmap)
 		return -ENOMEM;
+
+	bitmap_num = bitmap_num / (8 * sizeof(u64));
 
 	idx_que->buf_size = srq->idx_que.buf_size;
 
 	if (hns_roce_buf_alloc(hr_dev, idx_que->buf_size, (1 << page_shift) * 2,
 			       &idx_que->idx_buf, page_shift)) {
-		bitmap_free(idx_que->bitmap);
+		kfree(idx_que->bitmap);
 		return -ENOMEM;
 	}
+
+	for (i = 0; i < bitmap_num; i++)
+		idx_que->bitmap[i] = ~(0UL);
 
 	return 0;
 }
 
-int hns_roce_create_srq(struct ib_srq *ib_srq,
-			struct ib_srq_init_attr *srq_init_attr,
-			struct ib_udata *udata)
+struct ib_srq *hns_roce_create_srq(struct ib_pd *pd,
+				   struct ib_srq_init_attr *srq_init_attr,
+				   struct ib_udata *udata)
 {
-	struct hns_roce_dev *hr_dev = to_hr_dev(ib_srq->device);
+	struct hns_roce_dev *hr_dev = to_hr_dev(pd->device);
 	struct hns_roce_ib_create_srq_resp resp = {};
-	struct hns_roce_srq *srq = to_hr_srq(ib_srq);
+	struct hns_roce_srq *srq;
 	int srq_desc_size;
 	int srq_buf_size;
 	u32 page_shift;
@@ -213,7 +223,11 @@ int hns_roce_create_srq(struct ib_srq *ib_srq,
 	/* Check the actual SRQ wqe and SRQ sge num */
 	if (srq_init_attr->attr.max_wr >= hr_dev->caps.max_srq_wrs ||
 	    srq_init_attr->attr.max_sge > hr_dev->caps.max_srq_sges)
-		return -EINVAL;
+		return ERR_PTR(-EINVAL);
+
+	srq = kzalloc(sizeof(*srq), GFP_KERNEL);
+	if (!srq)
+		return ERR_PTR(-ENOMEM);
 
 	mutex_init(&srq->mutex);
 	spin_lock_init(&srq->lock);
@@ -235,13 +249,17 @@ int hns_roce_create_srq(struct ib_srq *ib_srq,
 	if (udata) {
 		struct hns_roce_ib_create_srq  ucmd;
 
-		if (ib_copy_from_udata(&ucmd, udata, sizeof(ucmd)))
-			return -EFAULT;
+		if (ib_copy_from_udata(&ucmd, udata, sizeof(ucmd))) {
+			ret = -EFAULT;
+			goto err_srq;
+		}
 
 		srq->umem =
 			ib_umem_get(udata, ucmd.buf_addr, srq_buf_size, 0, 0);
-		if (IS_ERR(srq->umem))
-			return PTR_ERR(srq->umem);
+		if (IS_ERR(srq->umem)) {
+			ret = PTR_ERR(srq->umem);
+			goto err_srq;
+		}
 
 		if (hr_dev->caps.srqwqe_buf_pg_sz) {
 			npages = (ib_umem_page_count(srq->umem) +
@@ -254,7 +272,8 @@ int hns_roce_create_srq(struct ib_srq *ib_srq,
 		} else
 			ret = hns_roce_mtt_init(hr_dev,
 						ib_umem_page_count(srq->umem),
-						PAGE_SHIFT, &srq->mtt);
+						srq->umem->page_shift,
+						&srq->mtt);
 		if (ret)
 			goto err_buf;
 
@@ -280,9 +299,10 @@ int hns_roce_create_srq(struct ib_srq *ib_srq,
 			ret = hns_roce_mtt_init(hr_dev, npages,
 						page_shift, &srq->idx_que.mtt);
 		} else {
-			ret = hns_roce_mtt_init(
-				hr_dev, ib_umem_page_count(srq->idx_que.umem),
-				PAGE_SHIFT, &srq->idx_que.mtt);
+			ret = hns_roce_mtt_init(hr_dev,
+				       ib_umem_page_count(srq->idx_que.umem),
+				       srq->idx_que.umem->page_shift,
+				       &srq->idx_que.mtt);
 		}
 
 		if (ret) {
@@ -301,9 +321,11 @@ int hns_roce_create_srq(struct ib_srq *ib_srq,
 	} else {
 		page_shift = PAGE_SHIFT + hr_dev->caps.srqwqe_buf_pg_sz;
 		if (hns_roce_buf_alloc(hr_dev, srq_buf_size,
-				       (1 << page_shift) * 2, &srq->buf,
-				       page_shift))
-			return -ENOMEM;
+				      (1 << page_shift) * 2,
+				      &srq->buf, page_shift)) {
+			ret = -ENOMEM;
+			goto err_srq;
+		}
 
 		srq->head = 0;
 		srq->tail = srq->max - 1;
@@ -318,7 +340,7 @@ int hns_roce_create_srq(struct ib_srq *ib_srq,
 			goto err_srq_mtt;
 
 		page_shift = PAGE_SHIFT + hr_dev->caps.idx_buf_pg_sz;
-		ret = hns_roce_create_idx_que(ib_srq->pd, srq, page_shift);
+		ret = hns_roce_create_idx_que(pd, srq, page_shift);
 		if (ret) {
 			dev_err(hr_dev->dev, "Create idx queue fail(%d)!\n",
 				ret);
@@ -350,7 +372,7 @@ int hns_roce_create_srq(struct ib_srq *ib_srq,
 
 	srq->db_reg_l = hr_dev->reg_base + SRQ_DB_REG;
 
-	ret = hns_roce_srq_alloc(hr_dev, to_hr_pd(ib_srq->pd)->pdn, cqn, 0,
+	ret = hns_roce_srq_alloc(hr_dev, to_hr_pd(pd)->pdn, cqn, 0,
 				 &srq->mtt, 0, srq);
 	if (ret)
 		goto err_wrid;
@@ -367,7 +389,7 @@ int hns_roce_create_srq(struct ib_srq *ib_srq,
 		}
 	}
 
-	return 0;
+	return &srq->ibsrq;
 
 err_srqc_alloc:
 	hns_roce_srq_free(hr_dev, srq);
@@ -379,25 +401,29 @@ err_idx_buf:
 	hns_roce_mtt_cleanup(hr_dev, &srq->idx_que.mtt);
 
 err_idx_mtt:
-	ib_umem_release(srq->idx_que.umem);
+	if (udata)
+		ib_umem_release(srq->idx_que.umem);
 
 err_create_idx:
 	hns_roce_buf_free(hr_dev, srq->idx_que.buf_size,
 			  &srq->idx_que.idx_buf);
-	bitmap_free(srq->idx_que.bitmap);
+	kfree(srq->idx_que.bitmap);
 
 err_srq_mtt:
 	hns_roce_mtt_cleanup(hr_dev, &srq->mtt);
 
 err_buf:
-	ib_umem_release(srq->umem);
-	if (!udata)
+	if (udata)
+		ib_umem_release(srq->umem);
+	else
 		hns_roce_buf_free(hr_dev, srq_buf_size, &srq->buf);
 
-	return ret;
+err_srq:
+	kfree(srq);
+	return ERR_PTR(ret);
 }
 
-void hns_roce_destroy_srq(struct ib_srq *ibsrq, struct ib_udata *udata)
+int hns_roce_destroy_srq(struct ib_srq *ibsrq)
 {
 	struct hns_roce_dev *hr_dev = to_hr_dev(ibsrq->device);
 	struct hns_roce_srq *srq = to_hr_srq(ibsrq);
@@ -405,15 +431,19 @@ void hns_roce_destroy_srq(struct ib_srq *ibsrq, struct ib_udata *udata)
 	hns_roce_srq_free(hr_dev, srq);
 	hns_roce_mtt_cleanup(hr_dev, &srq->mtt);
 
-	if (udata) {
+	if (ibsrq->uobject) {
 		hns_roce_mtt_cleanup(hr_dev, &srq->idx_que.mtt);
+		ib_umem_release(srq->idx_que.umem);
+		ib_umem_release(srq->umem);
 	} else {
 		kvfree(srq->wrid);
 		hns_roce_buf_free(hr_dev, srq->max << srq->wqe_shift,
 				  &srq->buf);
 	}
-	ib_umem_release(srq->idx_que.umem);
-	ib_umem_release(srq->umem);
+
+	kfree(srq);
+
+	return 0;
 }
 
 int hns_roce_init_srq_table(struct hns_roce_dev *hr_dev)

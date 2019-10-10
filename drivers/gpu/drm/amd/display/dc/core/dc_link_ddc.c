@@ -23,8 +23,6 @@
  *
  */
 
-#include <linux/slab.h>
-
 #include "dm_services.h"
 #include "dm_helpers.h"
 #include "gpio_service_interface.h"
@@ -93,8 +91,6 @@ union hdmi_scdc_status_flags_data {
 		uint8_t CH2_LOCKED:1;
 		uint8_t RESERVED:4;
 		uint8_t RESERVED2:8;
-		uint8_t RESERVED3:8;
-
 	} fields;
 };
 
@@ -111,10 +107,14 @@ union hdmi_scdc_ced_data {
 		uint8_t CH2_7HIGH:7;
 		uint8_t CH2_VALID:1;
 		uint8_t CHECKSUM:8;
-		uint8_t RESERVED:8;
-		uint8_t RESERVED2:8;
-		uint8_t RESERVED3:8;
-		uint8_t RESERVED4:4;
+	} fields;
+};
+
+union hdmi_scdc_test_config_Data {
+	uint8_t byte;
+	struct {
+		uint8_t TEST_READ_REQUEST_DELAY:7;
+		uint8_t TEST_READ_REQUEST: 1;
 	} fields;
 };
 
@@ -573,28 +573,12 @@ bool dal_ddc_service_query_ddc_data(
 	return ret;
 }
 
-/* dc_link_aux_transfer_raw() - Attempt to transfer
- * the given aux payload.  This function does not perform
- * retries or handle error states.  The reply is returned
- * in the payload->reply and the result through
- * *operation_result.  Returns the number of bytes transferred,
- * or -1 on a failure.
- */
-int dc_link_aux_transfer_raw(struct ddc_service *ddc,
-		struct aux_payload *payload,
-		enum aux_channel_operation_result *operation_result)
+int dc_link_aux_transfer(struct ddc_service *ddc,
+		struct aux_payload *payload)
 {
-	return dce_aux_transfer_raw(ddc, payload, operation_result);
+	return dce_aux_transfer(ddc, payload);
 }
 
-/* dc_link_aux_transfer_with_retries() - Attempt to submit an
- * aux payload, retrying on timeouts, defers, and busy states
- * as outlined in the DP spec.  Returns true if the request
- * was successful.
- *
- * Unless you want to implement your own retry semantics, this
- * is probably the one you want.
- */
 bool dc_link_aux_transfer_with_retries(struct ddc_service *ddc,
 		struct aux_payload *payload)
 {

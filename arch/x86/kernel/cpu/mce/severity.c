@@ -1,7 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * MCE grading rules.
  * Copyright 2008, 2009 Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; version 2
+ * of the License.
  *
  * Author: Andi Kleen
  */
@@ -400,13 +404,21 @@ static const struct file_operations severities_coverage_fops = {
 
 static int __init severities_debugfs_init(void)
 {
-	struct dentry *dmce;
+	struct dentry *dmce, *fsev;
 
 	dmce = mce_get_debugfs_dir();
+	if (!dmce)
+		goto err_out;
 
-	debugfs_create_file("severities-coverage", 0444, dmce, NULL,
-			    &severities_coverage_fops);
+	fsev = debugfs_create_file("severities-coverage", 0444, dmce, NULL,
+				   &severities_coverage_fops);
+	if (!fsev)
+		goto err_out;
+
 	return 0;
+
+err_out:
+	return -ENOMEM;
 }
 late_initcall(severities_debugfs_init);
 #endif /* CONFIG_DEBUG_FS */

@@ -148,7 +148,6 @@ MODULE_PARM_DESC(ch_count,
 
 static void srp_add_one(struct ib_device *device);
 static void srp_remove_one(struct ib_device *device, void *client_data);
-static void srp_rename_dev(struct ib_device *device, void *client_data);
 static void srp_recv_done(struct ib_cq *cq, struct ib_wc *wc);
 static void srp_handle_qp_err(struct ib_cq *cq, struct ib_wc *wc,
 		const char *opname);
@@ -163,8 +162,7 @@ static struct workqueue_struct *srp_remove_wq;
 static struct ib_client srp_client = {
 	.name   = "srp",
 	.add    = srp_add_one,
-	.remove = srp_remove_one,
-	.rename = srp_rename_dev
+	.remove = srp_remove_one
 };
 
 static struct ib_sa_client srp_sa_client;
@@ -2340,6 +2338,7 @@ static void srp_handle_qp_err(struct ib_cq *cq, struct ib_wc *wc,
 static int srp_queuecommand(struct Scsi_Host *shost, struct scsi_cmnd *scmnd)
 {
 	struct srp_target_port *target = host_to_target(shost);
+	struct srp_rport *rport = target->rport;
 	struct srp_rdma_ch *ch;
 	struct srp_request *req;
 	struct srp_iu *iu;
@@ -2349,6 +2348,16 @@ static int srp_queuecommand(struct Scsi_Host *shost, struct scsi_cmnd *scmnd)
 	u32 tag;
 	u16 idx;
 	int len, ret;
+	const bool in_scsi_eh = !in_interrupt() && current == shost->ehandler;
+
+	/*
+	 * The SCSI EH thread is the only context from which srp_queuecommand()
+	 * can get invoked for blocked devices (SDEV_BLOCK /
+	 * SDEV_CREATED_BLOCK). Avoid racing with srp_reconnect_rport() by
+	 * locking the rport mutex if invoked from inside the SCSI EH.
+	 */
+	if (in_scsi_eh)
+		mutex_lock(&rport->mutex);
 
 	scmnd->result = srp_chkready(target->rport);
 	if (unlikely(scmnd->result))
@@ -2417,7 +2426,13 @@ static int srp_queuecommand(struct Scsi_Host *shost, struct scsi_cmnd *scmnd)
 		goto err_unmap;
 	}
 
-	return 0;
+	ret = 0;
+
+unlock_rport:
+	if (in_scsi_eh)
+		mutex_unlock(&rport->mutex);
+
+	return ret;
 
 err_unmap:
 	srp_unmap_data(scmnd, ch, req);
@@ -2439,7 +2454,7 @@ err:
 		ret = SCSI_MLQUEUE_HOST_BUSY;
 	}
 
-	return ret;
+	goto unlock_rport;
 }
 
 /*
@@ -3046,6 +3061,20 @@ static int srp_target_alloc(struct scsi_target *starget)
 	return 0;
 }
 
+static int srp_slave_alloc(struct scsi_device *sdev)
+{
+	struct Scsi_Host *shost = sdev->host;
+	struct srp_target_port *target = host_to_target(shost);
+	struct srp_device *srp_dev = target->srp_host->srp_dev;
+	struct ib_device *ibdev = srp_dev->dev;
+
+	if (!(ibdev->attrs.device_cap_flags & IB_DEVICE_SG_GAPS_REG))
+		blk_queue_virt_boundary(sdev->request_queue,
+					~srp_dev->mr_page_mask);
+
+	return 0;
+}
+
 static int srp_slave_configure(struct scsi_device *sdev)
 {
 	struct Scsi_Host *shost = sdev->host;
@@ -3248,6 +3277,7 @@ static struct scsi_host_template srp_template = {
 	.name				= "InfiniBand SRP initiator",
 	.proc_name			= DRV_NAME,
 	.target_alloc			= srp_target_alloc,
+	.slave_alloc			= srp_slave_alloc,
 	.slave_configure		= srp_slave_configure,
 	.info				= srp_target_info,
 	.queuecommand			= srp_queuecommand,
@@ -3451,14 +3481,13 @@ static const match_table_t srp_opt_tokens = {
  * @net:	   [in]  Network namespace.
  * @sa:		   [out] Address family, IP address and port number.
  * @addr_port_str: [in]  IP address and port number.
- * @has_port:	   [out] Whether or not @addr_port_str includes a port number.
  *
  * Parse the following address formats:
  * - IPv4: <ip_address>:<port>, e.g. 1.2.3.4:5.
  * - IPv6: \[<ipv6_address>\]:<port>, e.g. [1::2:3%4]:5.
  */
 static int srp_parse_in(struct net *net, struct sockaddr_storage *sa,
-			const char *addr_port_str, bool *has_port)
+			const char *addr_port_str)
 {
 	char *addr_end, *addr = kstrdup(addr_port_str, GFP_KERNEL);
 	char *port_str;
@@ -3467,12 +3496,9 @@ static int srp_parse_in(struct net *net, struct sockaddr_storage *sa,
 	if (!addr)
 		return -ENOMEM;
 	port_str = strrchr(addr, ':');
-	if (port_str && strchr(port_str, ']'))
-		port_str = NULL;
-	if (port_str)
-		*port_str++ = '\0';
-	if (has_port)
-		*has_port = port_str != NULL;
+	if (!port_str)
+		return -EINVAL;
+	*port_str++ = '\0';
 	ret = inet_pton_with_scope(net, AF_INET, addr, port_str, sa);
 	if (ret && addr[0]) {
 		addr_end = addr + strlen(addr) - 1;
@@ -3494,7 +3520,6 @@ static int srp_parse_options(struct net *net, const char *buf,
 	char *p;
 	substring_t args[MAX_OPT_ARGS];
 	unsigned long long ull;
-	bool has_port;
 	int opt_mask = 0;
 	int token;
 	int ret = -EINVAL;
@@ -3593,8 +3618,7 @@ static int srp_parse_options(struct net *net, const char *buf,
 				ret = -ENOMEM;
 				goto out;
 			}
-			ret = srp_parse_in(net, &target->rdma_cm.src.ss, p,
-					   NULL);
+			ret = srp_parse_in(net, &target->rdma_cm.src.ss, p);
 			if (ret < 0) {
 				pr_warn("bad source parameter '%s'\n", p);
 				kfree(p);
@@ -3610,10 +3634,7 @@ static int srp_parse_options(struct net *net, const char *buf,
 				ret = -ENOMEM;
 				goto out;
 			}
-			ret = srp_parse_in(net, &target->rdma_cm.dst.ss, p,
-					   &has_port);
-			if (!has_port)
-				ret = -EINVAL;
+			ret = srp_parse_in(net, &target->rdma_cm.dst.ss, p);
 			if (ret < 0) {
 				pr_warn("bad dest parameter '%s'\n", p);
 				kfree(p);
@@ -3790,9 +3811,6 @@ static ssize_t srp_create_target(struct device *dev,
 	target_host->max_lun     = -1LL;
 	target_host->max_cmd_len = sizeof ((struct srp_cmd *) (void *) 0L)->cdb;
 	target_host->max_segment_size = ib_dma_max_seg_size(ibdev);
-
-	if (!(ibdev->attrs.device_cap_flags & IB_DEVICE_SG_GAPS_REG))
-		target_host->virt_boundary_mask = ~srp_dev->mr_page_mask;
 
 	target = host_to_target(target_host);
 
@@ -4092,20 +4110,6 @@ free_host:
 	kfree(host);
 
 	return NULL;
-}
-
-static void srp_rename_dev(struct ib_device *device, void *client_data)
-{
-	struct srp_device *srp_dev = client_data;
-	struct srp_host *host, *tmp_host;
-
-	list_for_each_entry_safe(host, tmp_host, &srp_dev->dev_list, list) {
-		char name[IB_DEVICE_NAME_MAX + 8];
-
-		snprintf(name, sizeof(name), "srp-%s-%d",
-			 dev_name(&device->dev), host->port);
-		device_rename(&host->dev, name);
-	}
 }
 
 static void srp_add_one(struct ib_device *device)

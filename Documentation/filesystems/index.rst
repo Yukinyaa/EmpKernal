@@ -16,8 +16,7 @@ algorithms work.
 .. toctree::
    :maxdepth: 2
 
-   vfs
-   path-lookup
+   path-lookup.rst
    api-summary
    splice
 
@@ -32,3 +31,13 @@ filesystem implementations.
 
    journalling
    fscrypt
+
+Filesystem-specific documentation
+=================================
+
+Documentation for individual filesystem types can be found here.
+
+.. toctree::
+   :maxdepth: 2
+
+   binderfs.rst

@@ -76,7 +76,6 @@ struct mqueue_inode_info {
 	wait_queue_head_t wait_q;
 
 	struct rb_root msg_tree;
-	struct rb_node *msg_tree_rightmost;
 	struct posix_msg_tree_node *node_cache;
 	struct mq_attr attr;
 
@@ -132,7 +131,6 @@ static int msg_insert(struct msg_msg *msg, struct mqueue_inode_info *info)
 {
 	struct rb_node **p, *parent = NULL;
 	struct posix_msg_tree_node *leaf;
-	bool rightmost = true;
 
 	p = &info->msg_tree.rb_node;
 	while (*p) {
@@ -141,10 +139,9 @@ static int msg_insert(struct msg_msg *msg, struct mqueue_inode_info *info)
 
 		if (likely(leaf->priority == msg->m_type))
 			goto insert_msg;
-		else if (msg->m_type < leaf->priority) {
+		else if (msg->m_type < leaf->priority)
 			p = &(*p)->rb_left;
-			rightmost = false;
-		} else
+		else
 			p = &(*p)->rb_right;
 	}
 	if (info->node_cache) {
@@ -157,10 +154,6 @@ static int msg_insert(struct msg_msg *msg, struct mqueue_inode_info *info)
 		INIT_LIST_HEAD(&leaf->msg_list);
 	}
 	leaf->priority = msg->m_type;
-
-	if (rightmost)
-		info->msg_tree_rightmost = &leaf->rb_node;
-
 	rb_link_node(&leaf->rb_node, parent, p);
 	rb_insert_color(&leaf->rb_node, &info->msg_tree);
 insert_msg:
@@ -170,35 +163,23 @@ insert_msg:
 	return 0;
 }
 
-static inline void msg_tree_erase(struct posix_msg_tree_node *leaf,
-				  struct mqueue_inode_info *info)
-{
-	struct rb_node *node = &leaf->rb_node;
-
-	if (info->msg_tree_rightmost == node)
-		info->msg_tree_rightmost = rb_prev(node);
-
-	rb_erase(node, &info->msg_tree);
-	if (info->node_cache) {
-		kfree(leaf);
-	} else {
-		info->node_cache = leaf;
-	}
-}
-
 static inline struct msg_msg *msg_get(struct mqueue_inode_info *info)
 {
-	struct rb_node *parent = NULL;
+	struct rb_node **p, *parent = NULL;
 	struct posix_msg_tree_node *leaf;
 	struct msg_msg *msg;
 
 try_again:
-	/*
-	 * During insert, low priorities go to the left and high to the
-	 * right.  On receive, we want the highest priorities first, so
-	 * walk all the way to the right.
-	 */
-	parent = info->msg_tree_rightmost;
+	p = &info->msg_tree.rb_node;
+	while (*p) {
+		parent = *p;
+		/*
+		 * During insert, low priorities go to the left and high to the
+		 * right.  On receive, we want the highest priorities first, so
+		 * walk all the way to the right.
+		 */
+		p = &(*p)->rb_right;
+	}
 	if (!parent) {
 		if (info->attr.mq_curmsgs) {
 			pr_warn_once("Inconsistency in POSIX message queue, "
@@ -213,14 +194,24 @@ try_again:
 		pr_warn_once("Inconsistency in POSIX message queue, "
 			     "empty leaf node but we haven't implemented "
 			     "lazy leaf delete!\n");
-		msg_tree_erase(leaf, info);
+		rb_erase(&leaf->rb_node, &info->msg_tree);
+		if (info->node_cache) {
+			kfree(leaf);
+		} else {
+			info->node_cache = leaf;
+		}
 		goto try_again;
 	} else {
 		msg = list_first_entry(&leaf->msg_list,
 				       struct msg_msg, m_list);
 		list_del(&msg->m_list);
 		if (list_empty(&leaf->msg_list)) {
-			msg_tree_erase(leaf, info);
+			rb_erase(&leaf->rb_node, &info->msg_tree);
+			if (info->node_cache) {
+				kfree(leaf);
+			} else {
+				info->node_cache = leaf;
+			}
 		}
 	}
 	info->attr.mq_curmsgs--;
@@ -263,7 +254,6 @@ static struct inode *mqueue_get_inode(struct super_block *sb,
 		info->qsize = 0;
 		info->user = NULL;	/* set when all is ok */
 		info->msg_tree = RB_ROOT;
-		info->msg_tree_rightmost = NULL;
 		info->node_cache = NULL;
 		memset(&info->attr, 0, sizeof(info->attr));
 		info->attr.mq_maxmsg = min(ipc_ns->mq_msg_max,
@@ -364,6 +354,8 @@ static int mqueue_get_tree(struct fs_context *fc)
 {
 	struct mqueue_fs_context *ctx = fc->fs_private;
 
+	put_user_ns(fc->user_ns);
+	fc->user_ns = get_user_ns(ctx->ipc_ns->user_ns);
 	fc->s_fs_info = ctx->ipc_ns;
 	return vfs_get_super(fc, vfs_get_keyed_super, mqueue_fill_super);
 }
@@ -372,7 +364,8 @@ static void mqueue_fs_context_free(struct fs_context *fc)
 {
 	struct mqueue_fs_context *ctx = fc->fs_private;
 
-	put_ipc_ns(ctx->ipc_ns);
+	if (ctx->ipc_ns)
+		put_ipc_ns(ctx->ipc_ns);
 	kfree(ctx);
 }
 
@@ -385,8 +378,6 @@ static int mqueue_init_fs_context(struct fs_context *fc)
 		return -ENOMEM;
 
 	ctx->ipc_ns = get_ipc_ns(current->nsproxy->ipc_ns);
-	put_user_ns(fc->user_ns);
-	fc->user_ns = get_user_ns(ctx->ipc_ns->user_ns);
 	fc->fs_private = ctx;
 	fc->ops = &mqueue_fs_context_ops;
 	return 0;
@@ -405,8 +396,6 @@ static struct vfsmount *mq_create_mount(struct ipc_namespace *ns)
 	ctx = fc->fs_private;
 	put_ipc_ns(ctx->ipc_ns);
 	ctx->ipc_ns = get_ipc_ns(ns);
-	put_user_ns(fc->user_ns);
-	fc->user_ns = get_user_ns(ctx->ipc_ns->user_ns);
 
 	mnt = fc_mount(fc);
 	put_fs_context(fc);
@@ -430,18 +419,24 @@ static struct inode *mqueue_alloc_inode(struct super_block *sb)
 	return &ei->vfs_inode;
 }
 
-static void mqueue_free_inode(struct inode *inode)
+static void mqueue_i_callback(struct rcu_head *head)
 {
+	struct inode *inode = container_of(head, struct inode, i_rcu);
 	kmem_cache_free(mqueue_inode_cachep, MQUEUE_I(inode));
+}
+
+static void mqueue_destroy_inode(struct inode *inode)
+{
+	call_rcu(&inode->i_rcu, mqueue_i_callback);
 }
 
 static void mqueue_evict_inode(struct inode *inode)
 {
 	struct mqueue_inode_info *info;
 	struct user_struct *user;
+	unsigned long mq_bytes, mq_treesize;
 	struct ipc_namespace *ipc_ns;
-	struct msg_msg *msg, *nmsg;
-	LIST_HEAD(tmp_msg);
+	struct msg_msg *msg;
 
 	clear_inode(inode);
 
@@ -452,27 +447,20 @@ static void mqueue_evict_inode(struct inode *inode)
 	info = MQUEUE_I(inode);
 	spin_lock(&info->lock);
 	while ((msg = msg_get(info)) != NULL)
-		list_add_tail(&msg->m_list, &tmp_msg);
+		free_msg(msg);
 	kfree(info->node_cache);
 	spin_unlock(&info->lock);
 
-	list_for_each_entry_safe(msg, nmsg, &tmp_msg, m_list) {
-		list_del(&msg->m_list);
-		free_msg(msg);
-	}
+	/* Total amount of bytes accounted for the mqueue */
+	mq_treesize = info->attr.mq_maxmsg * sizeof(struct msg_msg) +
+		min_t(unsigned int, info->attr.mq_maxmsg, MQ_PRIO_MAX) *
+		sizeof(struct posix_msg_tree_node);
+
+	mq_bytes = mq_treesize + (info->attr.mq_maxmsg *
+				  info->attr.mq_msgsize);
 
 	user = info->user;
 	if (user) {
-		unsigned long mq_bytes, mq_treesize;
-
-		/* Total amount of bytes accounted for the mqueue */
-		mq_treesize = info->attr.mq_maxmsg * sizeof(struct msg_msg) +
-			min_t(unsigned int, info->attr.mq_maxmsg, MQ_PRIO_MAX) *
-			sizeof(struct posix_msg_tree_node);
-
-		mq_bytes = mq_treesize + (info->attr.mq_maxmsg *
-					  info->attr.mq_msgsize);
-
 		spin_lock(&mq_lock);
 		user->mq_bytes -= mq_bytes;
 		/*
@@ -622,6 +610,8 @@ static void wq_add(struct mqueue_inode_info *info, int sr,
 			struct ext_wait_queue *ewp)
 {
 	struct ext_wait_queue *walk;
+
+	ewp->task = current;
 
 	list_for_each_entry(walk, &info->e_wait_q[sr].list, list) {
 		if (walk->task->prio <= current->prio) {
@@ -1572,7 +1562,7 @@ static const struct file_operations mqueue_file_operations = {
 
 static const struct super_operations mqueue_super_ops = {
 	.alloc_inode = mqueue_alloc_inode,
-	.free_inode = mqueue_free_inode,
+	.destroy_inode = mqueue_destroy_inode,
 	.evict_inode = mqueue_evict_inode,
 	.statfs = simple_statfs,
 };

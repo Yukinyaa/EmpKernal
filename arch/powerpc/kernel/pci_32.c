@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Common pmac/prep/chrp pci routines. -- Cort
  */

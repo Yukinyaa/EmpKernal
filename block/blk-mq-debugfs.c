@@ -1,6 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2017 Facebook
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public
+ * License v2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 #include <linux/kernel.h>
@@ -17,7 +28,7 @@
 static void print_stat(struct seq_file *m, struct blk_rq_stat *stat)
 {
 	if (stat->nr_samples) {
-		seq_printf(m, "samples=%d, mean=%llu, min=%llu, max=%llu",
+		seq_printf(m, "samples=%d, mean=%lld, min=%llu, max=%llu",
 			   stat->nr_samples, stat->mean, stat->min, stat->max);
 	} else {
 		seq_puts(m, "samples=0");
@@ -29,13 +40,13 @@ static int queue_poll_stat_show(void *data, struct seq_file *m)
 	struct request_queue *q = data;
 	int bucket;
 
-	for (bucket = 0; bucket < (BLK_MQ_POLL_STATS_BKTS / 2); bucket++) {
-		seq_printf(m, "read  (%d Bytes): ", 1 << (9 + bucket));
-		print_stat(m, &q->poll_stat[2 * bucket]);
+	for (bucket = 0; bucket < BLK_MQ_POLL_STATS_BKTS/2; bucket++) {
+		seq_printf(m, "read  (%d Bytes): ", 1 << (9+bucket));
+		print_stat(m, &q->poll_stat[2*bucket]);
 		seq_puts(m, "\n");
 
-		seq_printf(m, "write (%d Bytes): ",  1 << (9 + bucket));
-		print_stat(m, &q->poll_stat[2 * bucket + 1]);
+		seq_printf(m, "write (%d Bytes): ",  1 << (9+bucket));
+		print_stat(m, &q->poll_stat[2*bucket+1]);
 		seq_puts(m, "\n");
 	}
 	return 0;
@@ -261,6 +272,23 @@ static int hctx_flags_show(void *data, struct seq_file *m)
 	return 0;
 }
 
+#define REQ_OP_NAME(name) [REQ_OP_##name] = #name
+static const char *const op_name[] = {
+	REQ_OP_NAME(READ),
+	REQ_OP_NAME(WRITE),
+	REQ_OP_NAME(FLUSH),
+	REQ_OP_NAME(DISCARD),
+	REQ_OP_NAME(SECURE_ERASE),
+	REQ_OP_NAME(ZONE_RESET),
+	REQ_OP_NAME(WRITE_SAME),
+	REQ_OP_NAME(WRITE_ZEROES),
+	REQ_OP_NAME(SCSI_IN),
+	REQ_OP_NAME(SCSI_OUT),
+	REQ_OP_NAME(DRV_IN),
+	REQ_OP_NAME(DRV_OUT),
+};
+#undef REQ_OP_NAME
+
 #define CMD_FLAG_NAME(name) [__REQ_##name] = #name
 static const char *const cmd_flag_name[] = {
 	CMD_FLAG_NAME(FAILFAST_DEV),
@@ -324,14 +352,13 @@ static const char *blk_mq_rq_state_name(enum mq_rq_state rq_state)
 int __blk_mq_debugfs_rq_show(struct seq_file *m, struct request *rq)
 {
 	const struct blk_mq_ops *const mq_ops = rq->q->mq_ops;
-	const unsigned int op = req_op(rq);
-	const char *op_str = blk_op_str(op);
+	const unsigned int op = rq->cmd_flags & REQ_OP_MASK;
 
 	seq_printf(m, "%p {.op=", rq);
-	if (strcmp(op_str, "UNKNOWN") == 0)
-		seq_printf(m, "%u", op);
+	if (op < ARRAY_SIZE(op_name) && op_name[op])
+		seq_printf(m, "%s", op_name[op]);
 	else
-		seq_printf(m, "%s", op_str);
+		seq_printf(m, "%d", op);
 	seq_puts(m, ", .cmd_flags=");
 	blk_flags_show(m, rq->cmd_flags & ~REQ_OP_MASK, cmd_flag_name,
 		       ARRAY_SIZE(cmd_flag_name));
@@ -763,8 +790,8 @@ static int blk_mq_debugfs_release(struct inode *inode, struct file *file)
 
 	if (attr->show)
 		return single_release(inode, file);
-
-	return seq_release(inode, file);
+	else
+		return seq_release(inode, file);
 }
 
 static const struct file_operations blk_mq_debugfs_fops = {
@@ -805,28 +832,38 @@ static const struct blk_mq_debugfs_attr blk_mq_debugfs_ctx_attrs[] = {
 	{},
 };
 
-static void debugfs_create_files(struct dentry *parent, void *data,
+static bool debugfs_create_files(struct dentry *parent, void *data,
 				 const struct blk_mq_debugfs_attr *attr)
 {
 	if (IS_ERR_OR_NULL(parent))
-		return;
+		return false;
 
 	d_inode(parent)->i_private = data;
 
-	for (; attr->name; attr++)
-		debugfs_create_file(attr->name, attr->mode, parent,
-				    (void *)attr, &blk_mq_debugfs_fops);
+	for (; attr->name; attr++) {
+		if (!debugfs_create_file(attr->name, attr->mode, parent,
+					 (void *)attr, &blk_mq_debugfs_fops))
+			return false;
+	}
+	return true;
 }
 
-void blk_mq_debugfs_register(struct request_queue *q)
+int blk_mq_debugfs_register(struct request_queue *q)
 {
 	struct blk_mq_hw_ctx *hctx;
 	int i;
 
+	if (!blk_debugfs_root)
+		return -ENOENT;
+
 	q->debugfs_dir = debugfs_create_dir(kobject_name(q->kobj.parent),
 					    blk_debugfs_root);
+	if (!q->debugfs_dir)
+		return -ENOMEM;
 
-	debugfs_create_files(q->debugfs_dir, q, blk_mq_debugfs_queue_attrs);
+	if (!debugfs_create_files(q->debugfs_dir, q,
+				  blk_mq_debugfs_queue_attrs))
+		goto err;
 
 	/*
 	 * blk_mq_init_sched() attempted to do this already, but q->debugfs_dir
@@ -838,10 +875,11 @@ void blk_mq_debugfs_register(struct request_queue *q)
 
 	/* Similarly, blk_mq_init_hctx() couldn't do this previously. */
 	queue_for_each_hw_ctx(q, hctx, i) {
-		if (!hctx->debugfs_dir)
-			blk_mq_debugfs_register_hctx(q, hctx);
-		if (q->elevator && !hctx->sched_debugfs_dir)
-			blk_mq_debugfs_register_sched_hctx(q, hctx);
+		if (!hctx->debugfs_dir && blk_mq_debugfs_register_hctx(q, hctx))
+			goto err;
+		if (q->elevator && !hctx->sched_debugfs_dir &&
+		    blk_mq_debugfs_register_sched_hctx(q, hctx))
+			goto err;
 	}
 
 	if (q->rq_qos) {
@@ -852,6 +890,12 @@ void blk_mq_debugfs_register(struct request_queue *q)
 			rqos = rqos->next;
 		}
 	}
+
+	return 0;
+
+err:
+	blk_mq_debugfs_unregister(q);
+	return -ENOMEM;
 }
 
 void blk_mq_debugfs_unregister(struct request_queue *q)
@@ -861,32 +905,52 @@ void blk_mq_debugfs_unregister(struct request_queue *q)
 	q->debugfs_dir = NULL;
 }
 
-static void blk_mq_debugfs_register_ctx(struct blk_mq_hw_ctx *hctx,
-					struct blk_mq_ctx *ctx)
+static int blk_mq_debugfs_register_ctx(struct blk_mq_hw_ctx *hctx,
+				       struct blk_mq_ctx *ctx)
 {
 	struct dentry *ctx_dir;
 	char name[20];
 
 	snprintf(name, sizeof(name), "cpu%u", ctx->cpu);
 	ctx_dir = debugfs_create_dir(name, hctx->debugfs_dir);
+	if (!ctx_dir)
+		return -ENOMEM;
 
-	debugfs_create_files(ctx_dir, ctx, blk_mq_debugfs_ctx_attrs);
+	if (!debugfs_create_files(ctx_dir, ctx, blk_mq_debugfs_ctx_attrs))
+		return -ENOMEM;
+
+	return 0;
 }
 
-void blk_mq_debugfs_register_hctx(struct request_queue *q,
-				  struct blk_mq_hw_ctx *hctx)
+int blk_mq_debugfs_register_hctx(struct request_queue *q,
+				 struct blk_mq_hw_ctx *hctx)
 {
 	struct blk_mq_ctx *ctx;
 	char name[20];
 	int i;
 
+	if (!q->debugfs_dir)
+		return -ENOENT;
+
 	snprintf(name, sizeof(name), "hctx%u", hctx->queue_num);
 	hctx->debugfs_dir = debugfs_create_dir(name, q->debugfs_dir);
+	if (!hctx->debugfs_dir)
+		return -ENOMEM;
 
-	debugfs_create_files(hctx->debugfs_dir, hctx, blk_mq_debugfs_hctx_attrs);
+	if (!debugfs_create_files(hctx->debugfs_dir, hctx,
+				  blk_mq_debugfs_hctx_attrs))
+		goto err;
 
-	hctx_for_each_ctx(hctx, ctx, i)
-		blk_mq_debugfs_register_ctx(hctx, ctx);
+	hctx_for_each_ctx(hctx, ctx, i) {
+		if (blk_mq_debugfs_register_ctx(hctx, ctx))
+			goto err;
+	}
+
+	return 0;
+
+err:
+	blk_mq_debugfs_unregister_hctx(hctx);
+	return -ENOMEM;
 }
 
 void blk_mq_debugfs_unregister_hctx(struct blk_mq_hw_ctx *hctx)
@@ -896,13 +960,17 @@ void blk_mq_debugfs_unregister_hctx(struct blk_mq_hw_ctx *hctx)
 	hctx->debugfs_dir = NULL;
 }
 
-void blk_mq_debugfs_register_hctxs(struct request_queue *q)
+int blk_mq_debugfs_register_hctxs(struct request_queue *q)
 {
 	struct blk_mq_hw_ctx *hctx;
 	int i;
 
-	queue_for_each_hw_ctx(q, hctx, i)
-		blk_mq_debugfs_register_hctx(q, hctx);
+	queue_for_each_hw_ctx(q, hctx, i) {
+		if (blk_mq_debugfs_register_hctx(q, hctx))
+			return -ENOMEM;
+	}
+
+	return 0;
 }
 
 void blk_mq_debugfs_unregister_hctxs(struct request_queue *q)
@@ -914,23 +982,29 @@ void blk_mq_debugfs_unregister_hctxs(struct request_queue *q)
 		blk_mq_debugfs_unregister_hctx(hctx);
 }
 
-void blk_mq_debugfs_register_sched(struct request_queue *q)
+int blk_mq_debugfs_register_sched(struct request_queue *q)
 {
 	struct elevator_type *e = q->elevator->type;
 
-	/*
-	 * If the parent directory has not been created yet, return, we will be
-	 * called again later on and the directory/files will be created then.
-	 */
 	if (!q->debugfs_dir)
-		return;
+		return -ENOENT;
 
 	if (!e->queue_debugfs_attrs)
-		return;
+		return 0;
 
 	q->sched_debugfs_dir = debugfs_create_dir("sched", q->debugfs_dir);
+	if (!q->sched_debugfs_dir)
+		return -ENOMEM;
 
-	debugfs_create_files(q->sched_debugfs_dir, q, e->queue_debugfs_attrs);
+	if (!debugfs_create_files(q->sched_debugfs_dir, q,
+				  e->queue_debugfs_attrs))
+		goto err;
+
+	return 0;
+
+err:
+	blk_mq_debugfs_unregister_sched(q);
+	return -ENOMEM;
 }
 
 void blk_mq_debugfs_unregister_sched(struct request_queue *q)
@@ -945,22 +1019,36 @@ void blk_mq_debugfs_unregister_rqos(struct rq_qos *rqos)
 	rqos->debugfs_dir = NULL;
 }
 
-void blk_mq_debugfs_register_rqos(struct rq_qos *rqos)
+int blk_mq_debugfs_register_rqos(struct rq_qos *rqos)
 {
 	struct request_queue *q = rqos->q;
 	const char *dir_name = rq_qos_id_to_name(rqos->id);
 
-	if (rqos->debugfs_dir || !rqos->ops->debugfs_attrs)
-		return;
+	if (!q->debugfs_dir)
+		return -ENOENT;
 
-	if (!q->rqos_debugfs_dir)
+	if (rqos->debugfs_dir || !rqos->ops->debugfs_attrs)
+		return 0;
+
+	if (!q->rqos_debugfs_dir) {
 		q->rqos_debugfs_dir = debugfs_create_dir("rqos",
 							 q->debugfs_dir);
+		if (!q->rqos_debugfs_dir)
+			return -ENOMEM;
+	}
 
 	rqos->debugfs_dir = debugfs_create_dir(dir_name,
 					       rqos->q->rqos_debugfs_dir);
+	if (!rqos->debugfs_dir)
+		return -ENOMEM;
 
-	debugfs_create_files(rqos->debugfs_dir, rqos, rqos->ops->debugfs_attrs);
+	if (!debugfs_create_files(rqos->debugfs_dir, rqos,
+				  rqos->ops->debugfs_attrs))
+		goto err;
+	return 0;
+ err:
+	blk_mq_debugfs_unregister_rqos(rqos);
+	return -ENOMEM;
 }
 
 void blk_mq_debugfs_unregister_queue_rqos(struct request_queue *q)
@@ -969,18 +1057,27 @@ void blk_mq_debugfs_unregister_queue_rqos(struct request_queue *q)
 	q->rqos_debugfs_dir = NULL;
 }
 
-void blk_mq_debugfs_register_sched_hctx(struct request_queue *q,
-					struct blk_mq_hw_ctx *hctx)
+int blk_mq_debugfs_register_sched_hctx(struct request_queue *q,
+				       struct blk_mq_hw_ctx *hctx)
 {
 	struct elevator_type *e = q->elevator->type;
 
+	if (!hctx->debugfs_dir)
+		return -ENOENT;
+
 	if (!e->hctx_debugfs_attrs)
-		return;
+		return 0;
 
 	hctx->sched_debugfs_dir = debugfs_create_dir("sched",
 						     hctx->debugfs_dir);
-	debugfs_create_files(hctx->sched_debugfs_dir, hctx,
-			     e->hctx_debugfs_attrs);
+	if (!hctx->sched_debugfs_dir)
+		return -ENOMEM;
+
+	if (!debugfs_create_files(hctx->sched_debugfs_dir, hctx,
+				  e->hctx_debugfs_attrs))
+		return -ENOMEM;
+
+	return 0;
 }
 
 void blk_mq_debugfs_unregister_sched_hctx(struct blk_mq_hw_ctx *hctx)

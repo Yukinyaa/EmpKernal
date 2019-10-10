@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Toggles a GPIO pin to power down a device
  *
@@ -6,6 +5,11 @@
  * Andrew Lunn <andrew@lunn.ch>
  *
  * Copyright (C) 2012 Jamie Lentin
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
  */
 #include <linux/kernel.h>
 #include <linux/init.h>

@@ -188,7 +188,6 @@ static int mscc_ocelot_probe(struct platform_device *pdev)
 		{ QSYS, "qsys" },
 		{ ANA, "ana" },
 		{ QS, "qs" },
-		{ S2, "s2" },
 	};
 
 	if (!np && !pdev->dev.platform_data)
@@ -291,10 +290,8 @@ static int mscc_ocelot_probe(struct platform_device *pdev)
 			continue;
 
 		err = ocelot_probe_port(ocelot, port, regs, phy);
-		if (err) {
-			of_node_put(portnp);
+		if (err)
 			return err;
-		}
 
 		phy_mode = of_get_phy_mode(portnp);
 		if (phy_mode < 0)
@@ -320,7 +317,6 @@ static int mscc_ocelot_probe(struct platform_device *pdev)
 			dev_err(ocelot->dev,
 				"invalid phy mode for port%d, (Q)SGMII only\n",
 				port);
-			of_node_put(portnp);
 			return -EINVAL;
 		}
 

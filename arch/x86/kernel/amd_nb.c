@@ -1,7 +1,6 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Shared support code for AMD K8 northbridges and derivates.
- * Copyright 2006 Andi Kleen, SUSE Labs.
+ * Copyright 2006 Andi Kleen, SUSE Labs. Subject to GPLv2.
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -72,7 +71,7 @@ static const struct pci_device_id hygon_root_ids[] = {
 	{}
 };
 
-static const struct pci_device_id hygon_nb_misc_ids[] = {
+const struct pci_device_id hygon_nb_misc_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_HYGON, PCI_DEVICE_ID_AMD_17H_DF_F3) },
 	{}
 };

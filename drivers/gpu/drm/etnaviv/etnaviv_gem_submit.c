@@ -1,6 +1,17 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2015 Etnaviv Project
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/dma-fence-array.h>
@@ -97,9 +108,9 @@ out_unlock:
 static void submit_unlock_object(struct etnaviv_gem_submit *submit, int i)
 {
 	if (submit->bos[i].flags & BO_LOCKED) {
-		struct drm_gem_object *obj = &submit->bos[i].obj->base;
+		struct etnaviv_gem_object *etnaviv_obj = submit->bos[i].obj;
 
-		ww_mutex_unlock(&obj->resv->lock);
+		ww_mutex_unlock(&etnaviv_obj->resv->lock);
 		submit->bos[i].flags &= ~BO_LOCKED;
 	}
 }
@@ -111,7 +122,7 @@ static int submit_lock_objects(struct etnaviv_gem_submit *submit,
 
 retry:
 	for (i = 0; i < submit->nr_bos; i++) {
-		struct drm_gem_object *obj = &submit->bos[i].obj->base;
+		struct etnaviv_gem_object *etnaviv_obj = submit->bos[i].obj;
 
 		if (slow_locked == i)
 			slow_locked = -1;
@@ -119,7 +130,7 @@ retry:
 		contended = i;
 
 		if (!(submit->bos[i].flags & BO_LOCKED)) {
-			ret = ww_mutex_lock_interruptible(&obj->resv->lock,
+			ret = ww_mutex_lock_interruptible(&etnaviv_obj->resv->lock,
 							  ticket);
 			if (ret == -EALREADY)
 				DRM_ERROR("BO at index %u already on submit list\n",
@@ -142,12 +153,12 @@ fail:
 		submit_unlock_object(submit, slow_locked);
 
 	if (ret == -EDEADLK) {
-		struct drm_gem_object *obj;
+		struct etnaviv_gem_object *etnaviv_obj;
 
-		obj = &submit->bos[contended].obj->base;
+		etnaviv_obj = submit->bos[contended].obj;
 
 		/* we lost out in a seqno race, lock and retry.. */
-		ret = ww_mutex_lock_slow_interruptible(&obj->resv->lock,
+		ret = ww_mutex_lock_slow_interruptible(&etnaviv_obj->resv->lock,
 						       ticket);
 		if (!ret) {
 			submit->bos[contended].flags |= BO_LOCKED;
@@ -165,7 +176,7 @@ static int submit_fence_sync(struct etnaviv_gem_submit *submit)
 
 	for (i = 0; i < submit->nr_bos; i++) {
 		struct etnaviv_gem_submit_bo *bo = &submit->bos[i];
-		struct reservation_object *robj = bo->obj->base.resv;
+		struct reservation_object *robj = bo->obj->resv;
 
 		if (!(bo->flags & ETNA_SUBMIT_BO_WRITE)) {
 			ret = reservation_object_reserve_shared(robj, 1);
@@ -196,13 +207,13 @@ static void submit_attach_object_fences(struct etnaviv_gem_submit *submit)
 	int i;
 
 	for (i = 0; i < submit->nr_bos; i++) {
-		struct drm_gem_object *obj = &submit->bos[i].obj->base;
+		struct etnaviv_gem_object *etnaviv_obj = submit->bos[i].obj;
 
 		if (submit->bos[i].flags & ETNA_SUBMIT_BO_WRITE)
-			reservation_object_add_excl_fence(obj->resv,
+			reservation_object_add_excl_fence(etnaviv_obj->resv,
 							  submit->out_fence);
 		else
-			reservation_object_add_shared_fence(obj->resv,
+			reservation_object_add_shared_fence(etnaviv_obj->resv,
 							    submit->out_fence);
 
 		submit_unlock_object(submit, i);

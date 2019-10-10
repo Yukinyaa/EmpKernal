@@ -24,17 +24,11 @@
  * Authors:
  *    Jerome Glisse <glisse@freedesktop.org>
  */
-
 #include <linux/list_sort.h>
-#include <linux/uaccess.h>
-
-#include <drm/drm_device.h>
-#include <drm/drm_file.h>
-#include <drm/drm_pci.h>
+#include <drm/drmP.h>
 #include <drm/radeon_drm.h>
-
-#include "radeon.h"
 #include "radeon_reg.h"
+#include "radeon.h"
 #include "radeon_trace.h"
 
 #define RADEON_CS_MAX_PRIORITY		32u

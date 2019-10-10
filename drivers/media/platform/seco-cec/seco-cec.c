@@ -18,7 +18,7 @@
 #include <linux/platform_device.h>
 
 /* CEC Framework */
-#include <media/cec-notifier.h>
+#include <media/cec.h>
 
 #include "seco-cec.h"
 
@@ -536,7 +536,6 @@ static int secocec_cec_get_notifier(struct cec_notifier **notify)
 				return -EPROBE_DEFER;
 
 			*notify = cec_notifier_get_conn(d, m->conn);
-			put_device(d);
 
 			return 0;
 		}

@@ -29,8 +29,7 @@ CGROUP COMMANDS
 |	*PROG* := { **id** *PROG_ID* | **pinned** *FILE* | **tag** *PROG_TAG* }
 |	*ATTACH_TYPE* := { **ingress** | **egress** | **sock_create** | **sock_ops** | **device** |
 |		**bind4** | **bind6** | **post_bind4** | **post_bind6** | **connect4** | **connect6** |
-|		**sendmsg4** | **sendmsg6** | **recvmsg4** | **recvmsg6** | **sysctl** |
-|		**getsockopt** | **setsockopt** }
+|               **sendmsg4** | **sendmsg6** }
 |	*ATTACH_FLAGS* := { **multi** | **override** }
 
 DESCRIPTION
@@ -86,14 +85,7 @@ DESCRIPTION
 		  **sendmsg4** call to sendto(2), sendmsg(2), sendmmsg(2) for an
 		  unconnected udp4 socket (since 4.18);
 		  **sendmsg6** call to sendto(2), sendmsg(2), sendmmsg(2) for an
-		  unconnected udp6 socket (since 4.18);
-		  **recvmsg4** call to recvfrom(2), recvmsg(2), recvmmsg(2) for
-                  an unconnected udp4 socket (since 5.2);
-		  **recvmsg6** call to recvfrom(2), recvmsg(2), recvmmsg(2) for
-                  an unconnected udp6 socket (since 5.2);
-		  **sysctl** sysctl access (since 5.2);
-		  **getsockopt** call to getsockopt (since 5.3);
-		  **setsockopt** call to setsockopt (since 5.3).
+		  unconnected udp6 socket (since 4.18).
 
 	**bpftool cgroup detach** *CGROUP* *ATTACH_TYPE* *PROG*
 		  Detach *PROG* from the cgroup *CGROUP* and attach type
@@ -107,7 +99,7 @@ OPTIONS
 	-h, --help
 		  Print short generic help message (similar to **bpftool help**).
 
-	-V, --version
+	-v, --version
 		  Print version number (similar to **bpftool version**).
 
 	-j, --json
@@ -119,10 +111,6 @@ OPTIONS
 
 	-f, --bpffs
 		  Show file names of pinned programs.
-
-	-d, --debug
-		  Print all logs available from libbpf, including debug-level
-		  information.
 
 EXAMPLES
 ========
@@ -156,5 +144,4 @@ SEE ALSO
 	**bpftool-map**\ (8),
 	**bpftool-feature**\ (8),
 	**bpftool-net**\ (8),
-	**bpftool-perf**\ (8),
-	**bpftool-btf**\ (8)
+	**bpftool-perf**\ (8)
